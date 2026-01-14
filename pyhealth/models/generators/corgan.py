@@ -85,7 +85,7 @@ class CorGANAutoencoder(nn.Module):
             nn.Tanh(),
         )
 
-        # decoder - reverse of encoder
+        # decoder - reverse of encoder (V2 architecture)
         self.decoder = nn.Sequential(
             nn.ConvTranspose1d(in_channels=32 * n_channels_base, out_channels=16 * n_channels_base, kernel_size=8, stride=1,
                                padding=0, dilation=1, groups=1, bias=True, padding_mode='zeros'),
@@ -118,46 +118,114 @@ class CorGANAutoencoder(nn.Module):
             x = x.unsqueeze(1)  # (batch, 1, features)
         encoded = self.encoder(x)
         decoded = self.decoder(encoded)
+        return torch.squeeze(decoded)
+
+    def decode(self, x):
+        # x shape: (batch, 128) from generator - unsqueeze for CNN decoder
+        if x.dim() == 2:
+            x = x.unsqueeze(2)  # (batch, 128, 1)
+        decoded = self.decoder(x)  # (batch, 1, output_len)
+        if decoded.dim() == 3 and decoded.shape[1] == 1:
+            decoded = decoded.squeeze(1)  # (batch, output_len)
+        return decoded
+
+
+class CorGANLinearAutoencoder(nn.Module):
+    """
+    Linear autoencoder for CorGAN - simpler than CNN, appropriate for unordered codes.
+
+    This variant replaces the CNN autoencoder with a simple linear architecture,
+    which is more appropriate for unordered medical codes (ICD-9) where spatial
+    locality doesn't exist. Based on:
+    - SynthEHRella's commented linear decoder alternative (line 229 in wgancnnmimic.py)
+    - MedGAN's proven linear architecture (achieves 10.66 codes/patient)
+    - Simpler gradient flow to address mode collapse
+
+    The core CorGAN components are preserved:
+    - WGAN training with Wasserstein loss
+    - Generator with residual connections
+    - Discriminator with minibatch averaging
+
+    This architecture is referred to as "CorGAN-Linear" to distinguish it from
+    the original CNN-based CorGAN while maintaining the core WGAN design.
+    """
+
+    def __init__(self, feature_size: int, latent_dim: int = 128):
+        super(CorGANLinearAutoencoder, self).__init__()
+        self.feature_size = feature_size
+        self.latent_dim = latent_dim
+
+        # Encoder: feature_size → latent_dim
+        # Use ReLU+BatchNorm (V11 achieved 4.49 codes, best linear result)
+        self.encoder = nn.Sequential(
+            nn.Linear(feature_size, latent_dim),
+            nn.ReLU(),
+            nn.BatchNorm1d(latent_dim)
+        )
+
+        # Decoder: latent_dim → feature_size
+        self.decoder = nn.Sequential(
+            nn.Linear(latent_dim, feature_size),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        """
+        Forward pass for autoencoder training.
+
+        Args:
+            x: Input tensor of shape (batch, feature_size)
+
+        Returns:
+            Decoded tensor of shape (batch, feature_size)
+        """
+        encoded = self.encoder(x)
+        decoded = self.decoder(encoded)
         return decoded
 
     def decode(self, x):
+        """
+        Decode latent representation from generator.
+
+        Args:
+            x: Latent tensor from generator of shape (batch, latent_dim)
+
+        Returns:
+            Decoded tensor of shape (batch, feature_size)
+        """
         return self.decoder(x)
 
 
 class CorGANGenerator(nn.Module):
-    """Generator for CorGAN - MLP that generates latent representations"""
-    
+    """Generator for CorGAN - MLP with residual connections (V2 architecture)"""
+
     def __init__(self, latent_dim: int = 128, hidden_dim: int = 128):
         super(CorGANGenerator, self).__init__()
         self.latent_dim = latent_dim
         self.hidden_dim = hidden_dim
-        
+
         # Layer 1
         self.linear1 = nn.Linear(latent_dim, hidden_dim)
         self.bn1 = nn.BatchNorm1d(hidden_dim, eps=0.001, momentum=0.01)
         self.activation1 = nn.ReLU()
-        
-        # Layer 2  
+
+        # Layer 2
         self.linear2 = nn.Linear(hidden_dim, hidden_dim)
         self.bn2 = nn.BatchNorm1d(hidden_dim, eps=0.001, momentum=0.01)
-        self.activation2 = nn.ReLU()
-        
-        # Layer 3
-        self.linear3 = nn.Linear(hidden_dim, hidden_dim)
-        self.bn3 = nn.BatchNorm1d(hidden_dim, eps=0.001, momentum=0.01)
-        self.activation3 = nn.Tanh()
+        self.activation2 = nn.Tanh()
 
     def forward(self, x):
-        # Layer 1
-        out = self.activation1(self.bn1(self.linear1(x)))
-        
-        # Layer 2
-        out = self.activation2(self.bn2(self.linear2(out)))
-        
-        # Layer 3
-        out = self.activation3(self.bn3(self.linear3(out)))
-        
-        return out
+        # Layer 1 with residual connection
+        residual = x
+        temp = self.activation1(self.bn1(self.linear1(x)))
+        out1 = temp + residual
+
+        # Layer 2 with residual connection
+        residual = out1
+        temp = self.activation2(self.bn2(self.linear2(out1)))
+        out2 = temp + residual
+
+        return out2
 
 
 class CorGANDiscriminator(nn.Module):
@@ -177,8 +245,8 @@ class CorGANDiscriminator(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim // 2),
             nn.ReLU(),
-            nn.Linear(hidden_dim // 2, 1),
-            nn.Sigmoid()
+            nn.Linear(hidden_dim // 2, 1)
+            # No sigmoid - WGAN uses unbounded critic outputs
         )
     
     def forward(self, x):
@@ -199,7 +267,7 @@ def weights_init(m):
     elif classname.find('BatchNorm') != -1:
         nn.init.normal_(m.weight.data, 1.0, 0.02)
         nn.init.constant_(m.bias.data, 0)
-    elif classname.find('Linear') != -1:
+    elif isinstance(m, nn.Linear):  # Use isinstance to match only actual Linear layers
         nn.init.normal_(m.weight.data, 0.0, 0.02)
         nn.init.constant_(m.bias.data, 0)
 

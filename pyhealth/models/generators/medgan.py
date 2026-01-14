@@ -33,6 +33,7 @@ class MedGANAutoencoder(nn.Module):
     def decode(self, x):
         return self.decoder(x)
 
+# ONLY USE ADMISSIONS AND DIAGNOSES FOR EVERYTHING
 
 class MedGANGenerator(nn.Module):
     """generator with residual connections"""
@@ -86,7 +87,7 @@ class MedGANDiscriminator(nn.Module):
 
 
 class MedGAN(BaseModel):
-    """simplified MedGAN for phecode matrix generation"""
+    """MedGAN for binary matrix generation"""
     
     def __init__(
         self,
@@ -133,9 +134,9 @@ class MedGAN(BaseModel):
         self._init_weights()
     
     @classmethod
-    def from_phecode_matrix(
+    def from_binary_matrix(
         cls,
-        phecode_matrix: np.ndarray,
+        binary_matrix: np.ndarray,
         latent_dim: int = 128,
         hidden_dim: int = 128,
         autoencoder_hidden_dim: int = 128,
@@ -143,7 +144,7 @@ class MedGAN(BaseModel):
         minibatch_averaging: bool = True,
         **kwargs
     ):
-        """create MedGAN model from phecode matrix"""
+        """create MedGAN model from binary matrix (ICD-9, etc.)"""
         class MatrixWrapper:
             def __init__(self, matrix):
                 self.matrix = matrix
@@ -154,22 +155,22 @@ class MedGAN(BaseModel):
                 return self.matrix.shape[0]
             
             def __getitem__(self, idx):
-                return {"phecode_vector": torch.tensor(self.matrix[idx], dtype=torch.float32)}
+                return {"binary_vector": torch.tensor(self.matrix[idx], dtype=torch.float32)}
             
             def iter_patients(self):
                 """iterate over patients"""
                 for i in range(len(self)):
                     yield type('Patient', (), {
-                        'phecode_vector': self.matrix[i],
+                        'binary_vector': self.matrix[i],
                         'patient_id': f'patient_{i}'
                     })()
         
-        dummy_dataset = MatrixWrapper(phecode_matrix)
+        dummy_dataset = MatrixWrapper(binary_matrix)
         
         model = cls(
             dataset=dummy_dataset,
-            feature_keys=["phecode_vector"],
-            label_key="phecode_vector",
+            feature_keys=["binary_vector"],
+            label_key="binary_vector",
             latent_dim=latent_dim,
             hidden_dim=hidden_dim,
             autoencoder_hidden_dim=autoencoder_hidden_dim,
@@ -179,7 +180,7 @@ class MedGAN(BaseModel):
         )
         
         # override input dimension
-        model.input_dim = phecode_matrix.shape[1]
+        model.input_dim = binary_matrix.shape[1]
         
         # reinitialize components with correct dimensions
         model.autoencoder = MedGANAutoencoder(input_dim=model.input_dim, hidden_dim=autoencoder_hidden_dim)
@@ -198,7 +199,7 @@ class MedGAN(BaseModel):
         
         # override feature extraction
         def extract_features(batch_data, device):
-            return batch_data["phecode_vector"].to(device)
+            return batch_data["binary_vector"].to(device)
         
         model._extract_features_from_batch = extract_features
         
@@ -299,7 +300,7 @@ class MedGAN(BaseModel):
                 
                 total_loss += loss.item()
                 num_batches += 1
-            
+    
             avg_loss = total_loss / num_batches
             a_losses.append(avg_loss)
             

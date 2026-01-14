@@ -1,0 +1,9 @@
+{
+  "n_synthetic_patients": 1000,
+  "n_icd9_codes": 6984,
+  "synthetic_sparsity": 0.920067310333252,
+  "avg_codes_per_patient": 558.25,
+  "vocabulary_size": 6984,
+  "real_data_sparsity": 0.9981935620307922,
+  "real_avg_codes_per_patient": 12.616291046142578
+}
