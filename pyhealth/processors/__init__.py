@@ -17,6 +17,12 @@ def get_processor(name: str):
 
 
 # Import all processors so they register themselves
+from .audio_processor import AudioProcessor
+from .deep_nested_sequence_processor import (
+    DeepNestedFloatsProcessor,
+    DeepNestedSequenceProcessor,
+)
+from .ignore_processor import IgnoreProcessor
 from .image_processor import ImageProcessor
 from .label_processor import (
     BinaryLabelProcessor,
@@ -24,23 +30,47 @@ from .label_processor import (
     MultiLabelProcessor,
     RegressionLabelProcessor,
 )
+from .multi_hot_processor import MultiHotProcessor
+from .nested_sequence_processor import (
+    NestedFloatsProcessor,
+    NestedSequenceProcessor,
+)
 from .raw_processor import RawProcessor
 from .sequence_processor import SequenceProcessor
 from .signal_processor import SignalProcessor
+from .stagenet_processor import (
+    StageNetProcessor,
+    StageNetTensorProcessor,
+)
+from .tensor_processor import TensorProcessor
 from .text_processor import TextProcessor
+from .time_image_processor import TimeImageProcessor
 from .timeseries_processor import TimeseriesProcessor
+from .tuple_time_text_processor import TupleTimeTextProcessor
 
 # Expose public API
 __all__ = [
-    "get_processor",
-    "ImageProcessor",
-    "SequenceProcessor",
-    "TimeseriesProcessor",
-    "SignalProcessor",
+    "AudioProcessor",
     "BinaryLabelProcessor",
+    "DeepNestedFloatsProcessor",
+    "DeepNestedSequenceProcessor",
+    "get_processor",
+    "IgnoreProcessor",
+    "ImageProcessor",
     "MultiClassLabelProcessor",
+    "MultiHotProcessor",
     "MultiLabelProcessor",
-    "RegressionLabelProcessor",
+    "NestedFloatsProcessor",
+    "NestedSequenceProcessor",
     "RawProcessor",
+    "RegressionLabelProcessor",
+    "SequenceProcessor",
+    "SignalProcessor",
+    "StageNetProcessor",
+    "StageNetTensorProcessor",
+    "TensorProcessor",
     "TextProcessor",
+    "TimeImageProcessor",
+    "TimeseriesProcessor",
+    "TupleTimeTextProcessor",
 ]
