@@ -7,6 +7,7 @@ def register_processor(name: str):
             raise ValueError(f"Processor '{name}' already registered.")
         PROCESSOR_REGISTRY[name] = cls
         return cls
+
     return decorator
 
 
@@ -17,12 +18,6 @@ def get_processor(name: str):
 
 
 # Import all processors so they register themselves
-from .audio_processor import AudioProcessor
-from .deep_nested_sequence_processor import (
-    DeepNestedFloatsProcessor,
-    DeepNestedSequenceProcessor,
-)
-from .ignore_processor import IgnoreProcessor
 from .image_processor import ImageProcessor
 from .label_processor import (
     BinaryLabelProcessor,
@@ -35,6 +30,10 @@ from .nested_sequence_processor import (
     NestedFloatsProcessor,
     NestedSequenceProcessor,
 )
+from .deep_nested_sequence_processor import (
+    DeepNestedFloatsProcessor,
+    DeepNestedSequenceProcessor,
+)
 from .raw_processor import RawProcessor
 from .sequence_processor import SequenceProcessor
 from .signal_processor import SignalProcessor
@@ -44,33 +43,40 @@ from .stagenet_processor import (
 )
 from .tensor_processor import TensorProcessor
 from .text_processor import TextProcessor
-from .time_image_processor import TimeImageProcessor
 from .timeseries_processor import TimeseriesProcessor
+from .time_image_processor import TimeImageProcessor
+from .graph_processor import GraphProcessor
+from .audio_processor import AudioProcessor
+from .ignore_processor import IgnoreProcessor
+from .temporal_timeseries_processor import TemporalTimeseriesProcessor
 from .tuple_time_text_processor import TupleTimeTextProcessor
 
 # Expose public API
+from .base_processor import (
+    FeatureProcessor,
+    ModalityType,
+    TemporalFeatureProcessor,
+)
 __all__ = [
-    "AudioProcessor",
-    "BinaryLabelProcessor",
-    "DeepNestedFloatsProcessor",
-    "DeepNestedSequenceProcessor",
-    "get_processor",
-    "IgnoreProcessor",
+    "FeatureProcessor",
+    "ModalityType",
+    "TemporalFeatureProcessor",
     "ImageProcessor",
-    "MultiClassLabelProcessor",
+    "LabelProcessor",
     "MultiHotProcessor",
-    "MultiLabelProcessor",
     "NestedFloatsProcessor",
     "NestedSequenceProcessor",
     "RawProcessor",
-    "RegressionLabelProcessor",
     "SequenceProcessor",
     "SignalProcessor",
     "StageNetProcessor",
     "StageNetTensorProcessor",
     "TensorProcessor",
+    "TemporalTimeseriesProcessor",
     "TextProcessor",
-    "TimeImageProcessor",
     "TimeseriesProcessor",
+    "TimeImageProcessor",
+    "GraphProcessor",
+    "AudioProcessor",
     "TupleTimeTextProcessor",
 ]

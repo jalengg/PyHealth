@@ -1,19 +1,46 @@
 .. _how_to_get_started:
 
 =====================
-How to Get Started with PyHealth
+Getting Started with PyHealth
 =====================
 
-Welcome to PyHealth! This guide will help you build machine learning pipelines for healthcare tasks using PyHealth.
+Welcome to PyHealth! This guide will help you get up and running with healthcare AI development. PyHealth makes it easy to build, test, and deploy healthcare machine learning models with minimal code.
+
+🚀 **New to PyHealth?** Start here. This guide walks you from install to first modeling.
+
+Introduction `[Video] <https://www.youtube.com/watch?v=1Ir6hzU4Nro&list=PLR3CNIF8DDHJUl8RLhyOVpX_kT4bxulEV&index=1>`_
+--------------------------------------------------------------------------------------------------------------
+
+Prefer video? Watch a short introduction to PyHealth before you start.
 
 Installing PyHealth
 ===================
 
-You can install PyHealth using `pip`:
+**Python Version Requirement**
+
+PyHealth 2.0 requires **Python 3.12 or higher**. Verify your version:
+
+.. code-block:: bash
+
+   python --version  # Should be 3.12.x or 3.13.x
+
+**Latest Release (Recommended)**
+
+Install PyHealth 2.0 from PyPI with significant performance improvements and new features:
 
 .. code-block:: bash
 
    pip install pyhealth
+
+**Legacy Version**
+
+For backward compatibility, the older stable version (1.16) supports Python 3.9+:
+
+.. code-block:: bash
+
+   pip install pyhealth==1.16
+
+**Development Installation**
 
 To install the latest development version from GitHub:
 
@@ -23,7 +50,7 @@ To install the latest development version from GitHub:
    cd PyHealth
    pip install -e .
 
-Ensure you have the required dependencies installed before proceeding.
+See :doc:`install` for detailed installation instructions including CUDA setup and platform-specific notes.
 
 Overview of ML Pipelines
 =========================
@@ -48,8 +75,7 @@ Example:
 
    mimic3base = MIMIC3Dataset(
        root="https://storage.googleapis.com/pyhealth/Synthetic_MIMIC-III/",
-       tables=["DIAGNOSES_ICD", "PROCEDURES_ICD", "PRESCRIPTIONS"],
-       code_mapping={"NDC": "CCSCM"},
+       tables=["DIAGNOSES_ICD", "PROCEDURES_ICD", "PRESCRIPTIONS"]
    )
 
 Stage 2: Defining Tasks
@@ -61,9 +87,10 @@ Example:
 
 .. code-block:: python
 
-   from pyhealth.tasks import readmission_prediction_mimic3_fn
+   from pyhealth.tasks.mortality_prediction import MortalityPredictionMIMIC3
 
-   mimic3sample = mimic3base.set_task(task_fn=readmission_prediction_mimic3_fn)
+   mimic3_mortality_prediction = MortalityPredictionMIMIC3()
+   mimic3sample = mimic3base.set_task(mimic3_mortality_prediction)
 
 To split data and create DataLoaders:
 
@@ -89,9 +116,6 @@ Example:
 
    model = Transformer(
        dataset=mimic3sample,
-       feature_keys=["conditions", "procedures", "drugs"],
-       label_key="label",
-       mode="binary",
    )
 
 Stage 4: Training the Model
@@ -110,7 +134,7 @@ Example:
        train_dataloader=train_loader,
        val_dataloader=val_loader,
        epochs=50,
-       monitor="pr_auc_samples",
+       monitor="pr_auc",
    )
 
 Stage 5: Evaluating Model Performance
@@ -128,3 +152,28 @@ Example:
 
    y_true, y_prob, loss = trainer.inference(test_loader)
    binary_metrics_fn(y_true, y_prob, metrics=["pr_auc", "roc_auc"])
+
+Essential Guides
+================
+
+Now that you understand the basics, dive deeper into PyHealth's capabilities:
+
+📚 **Core Guides**
+------------------
+
+- :doc:`why_pyhealth` - Discover why PyHealth is the best choice for healthcare AI
+- :doc:`api/medcode` - Learn how to translate between medical coding systems (ICD, NDC, ATC, CCS)
+- :doc:`tutorials` - Interactive Jupyter notebooks with real examples
+
+🛠️ **Advanced Topics**
+----------------------
+
+- :doc:`api/models` - Complete documentation of all available models
+- :doc:`api/datasets` - Working with healthcare datasets
+- :doc:`api/tasks` - Defining custom healthcare prediction tasks
+
+🤝 **Community & Support**
+--------------------------
+
+- :doc:`how_to_contribute` - Join our community of healthcare AI developers
+- `Discord Community <https://discord.gg/mpb835EHaX>`_ - Chat with other users and developers

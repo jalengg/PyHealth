@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, Iterable
 
 import torch
 
@@ -19,7 +19,7 @@ class BinaryLabelProcessor(FeatureProcessor):
         super().__init__()
         self.label_vocab: Dict[Any, int] = {}
 
-    def fit(self, samples: List[Dict[str, Any]], field: str) -> None:
+    def fit(self, samples: Iterable[Dict[str, Any]], field: str) -> None:
         all_labels = set([sample[field] for sample in samples])
         if len(all_labels) != 2:
             raise ValueError(f"Expected 2 unique labels, got {len(all_labels)}")
@@ -40,6 +40,20 @@ class BinaryLabelProcessor(FeatureProcessor):
     def size(self):
         return 1
 
+    def is_token(self) -> bool:
+        """Binary labels are continuous float targets for BCE loss."""
+        return False
+
+    def schema(self) -> tuple[str, ...]:
+        return ("value",)
+
+    def dim(self) -> tuple[int, ...]:
+        """Output shape is (1,), so 1 dimension."""
+        return (1,)
+
+    def spatial(self) -> tuple[bool, ...]:
+        return (False,)
+
     def __repr__(self):
         return f"BinaryLabelProcessor(label_vocab_size={len(self.label_vocab)})"
 
@@ -54,7 +68,7 @@ class MultiClassLabelProcessor(FeatureProcessor):
         super().__init__()
         self.label_vocab: Dict[Any, int] = {}
 
-    def fit(self, samples: List[Dict[str, Any]], field: str) -> None:
+    def fit(self, samples: Iterable[Dict[str, Any]], field: str) -> None:
         all_labels = set([sample[field] for sample in samples])
         num_classes = len(all_labels)
         if all_labels == set(range(num_classes)):
@@ -68,9 +82,23 @@ class MultiClassLabelProcessor(FeatureProcessor):
     def process(self, value: Any) -> torch.Tensor:
         index = self.label_vocab[value]
         return torch.tensor(index, dtype=torch.long)
-    
+
     def size(self):
         return len(self.label_vocab)
+
+    def is_token(self) -> bool:
+        """Multi-class labels are discrete token indices."""
+        return True
+
+    def schema(self) -> tuple[str, ...]:
+        return ("value",)
+
+    def dim(self) -> tuple[int, ...]:
+        """Output is a scalar tensor (dim 0)."""
+        return (0,)
+
+    def spatial(self) -> tuple[bool, ...]:
+        return ()
 
     def __repr__(self):
         return f"MultiClassLabelProcessor(label_vocab_size={len(self.label_vocab)})"
@@ -89,7 +117,7 @@ class MultiLabelProcessor(FeatureProcessor):
         super().__init__()
         self.label_vocab: Dict[Any, int] = {}
 
-    def fit(self, samples: List[Dict[str, Any]], field: str) -> None:
+    def fit(self, samples: Iterable[Dict[str, Any]], field: str) -> None:
         all_labels = set()
         for sample in samples:
             for label in sample[field]:
@@ -115,6 +143,20 @@ class MultiLabelProcessor(FeatureProcessor):
     def size(self):
         return len(self.label_vocab)
 
+    def is_token(self) -> bool:
+        """Multi-label indicators are continuous float targets for BCE loss."""
+        return False
+
+    def schema(self) -> tuple[str, ...]:
+        return ("value",)
+
+    def dim(self) -> tuple[int, ...]:
+        """Output shape is (num_classes,), so 1 dimension."""
+        return (1,)
+
+    def spatial(self) -> tuple[bool, ...]:
+        return (False,)
+
     def __repr__(self):
         return f"MultiLabelProcessor(label_vocab_size={len(self.label_vocab)})"
 
@@ -130,6 +172,20 @@ class RegressionLabelProcessor(FeatureProcessor):
     
     def size(self):
         return 1
+
+    def is_token(self) -> bool:
+        """Regression labels are continuous, not discrete tokens."""
+        return False
+
+    def schema(self) -> tuple[str, ...]:
+        return ("value",)
+
+    def dim(self) -> tuple[int, ...]:
+        """Output shape is (1,), so 1 dimension."""
+        return (1,)
+
+    def spatial(self) -> tuple[bool, ...]:
+        return (False,)
 
     def __repr__(self):
         return "RegressionLabelProcessor()"

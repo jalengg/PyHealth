@@ -1,58 +1,62 @@
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, cast
 
 import torch
 import torch.nn as nn
 
-from pyhealth.datasets import SampleEHRDataset
+from pyhealth.datasets import SampleDataset
 from pyhealth.models import BaseModel
+from pyhealth.interpret.api import Interpretable
+
+from .embedding import EmbeddingModel
 
 
-class MLP(BaseModel):
+class MLP(BaseModel, Interpretable):
     """Multi-layer perceptron model.
 
-    This model applies a separate MLP layer for each feature, and then concatenates
-    the final hidden states of each MLP layer. The concatenated hidden states are
-    then fed into a fully connected layer to make predictions.
+    This model applies a separate MLP layer for each feature, and then
+    concatenates the final hidden states of each MLP layer. The concatenated
+    hidden states are then fed to a classifier layer.
 
     Note:
         We use separate MLP layers for different feature_keys.
-        Currentluy, we automatically support different input formats:
+        Currently, we automatically support different input formats:
             - code based input (need to use the embedding table later)
             - float/int based value input
         We follow the current convention for the rnn model:
             - case 1. [code1, code2, code3, ...]
-                - we will assume the code follows the order; our model will encode
-                each code into a vector; we use mean/sum pooling and then MLP
-            - case 2. [[code1, code2]] or [[code1, code2], [code3, code4, code5], ...]
-                - we first use the embedding table to encode each code into a vector
-                and then use mean/sum pooling to get one vector for each sample; we then
-                use MLP layers
-            - case 3. [1.5, 2.0, 0.0]
-                - we run MLP directly
-            - case 4. [[1.5, 2.0, 0.0]] or [[1.5, 2.0, 0.0], [8, 1.2, 4.5], ...]
-                - This case only makes sense when each inner bracket has the same length;
-                we assume each dimension has the same meaning; we use mean/sum pooling
-                within each outer bracket and use MLP, similar to case 1 after embedding table
+                - we will assume the code follows the order; our model will
+                  encode them to a hidden representation using the
+                  embedding table
+            - case 2. [[code1, code2]] or [[code1, code2],
+                     [code3, code4, code5], ...]
+                - we first use the embedding table to encode each code into a
+                  vector and then use mean/sum pooling to get one vector for
+                  each sample; we then apply the MLP on these pooled vectors
+            - case 3. [1.5, 2.0, 0.0] or [1.5, 2.0, 0.0, ...]
+                - This case applies MLP on the input vectors directly
+            - case 4. [[1.5, 2.0, 0.0]] or [[1.5, 2.0, 0.0],
+                      [8, 1.2, 4.5], ...]
+                - This case only makes sense when each inner bracket has the
+                  same length; we assume each dimension has the same meaning;
+                  we use mean/sum pooling within each outer bracket and use MLP,
+                  similar to case 1 after embedding table
             - case 5. [[[1.5, 2.0, 0.0]]] or [[[1.5, 2.0, 0.0], [8, 1.2, 4.5]], ...]
-                - This case only makes sense when each inner bracket has the same length;
-                we assume each dimension has the same meaning; we use mean/sum pooling
-                within each outer bracket and use MLP, similar to case 2 after embedding table
+                - This case only makes sense when each inner bracket has the
+                  same length; we assume each dimension has the same meaning;
+                  we use mean/sum pooling within each outer bracket and use MLP,
+                  similar to case 2 after embedding table
 
     Args:
         dataset: the dataset to train the model. It is used to query certain
             information such as the set of all tokens.
-        feature_keys:  list of keys in samples to use as features,
-            e.g. ["conditions", "procedures"].
-        label_key: key in samples to use as label (e.g., "drugs").
-        mode: one of "binary", "multiclass", or "multilabel".
         embedding_dim: the embedding dimension. Default is 128.
         hidden_dim: the hidden dimension. Default is 128.
         n_layers: the number of layers. Default is 2.
         activation: the activation function. Default is "relu".
-        **kwargs: other parameters for the RNN layer.
+        **kwargs: other parameters for the MLP layer.
 
     Examples:
-        >>> from pyhealth.datasets import SampleEHRDataset
+        >>> from pyhealth.datasets import create_sample_dataset
         >>> samples = [
         ...         {
         ...             "patient_id": "patient-0",
@@ -69,15 +73,16 @@ class MLP(BaseModel):
         ...             "label": 1,
         ...         },
         ...     ]
-        >>> dataset = SampleEHRDataset(samples=samples, dataset_name="test")
+        >>> input_schema = {"conditions": "sequence",
+        ...                 "procedures": "timeseries"}
+        >>> output_schema = {"label": "binary"}
+        >>> dataset = create_sample_dataset(samples=samples,
+        ...                        input_schema=input_schema,
+        ...                        output_schema=output_schema,
+        ...                        dataset_name="test")
         >>>
         >>> from pyhealth.models import MLP
-        >>> model = MLP(
-        ...         dataset=dataset,
-        ...         feature_keys=["conditions", "procedures"],
-        ...         label_key="label",
-        ...         mode="binary",
-        ...     )
+        >>> model = MLP(dataset=dataset)
         >>>
         >>> from pyhealth.datasets import get_dataloader
         >>> train_loader = get_dataloader(dataset, batch_size=2, shuffle=True)
@@ -100,64 +105,31 @@ class MLP(BaseModel):
 
     def __init__(
         self,
-        dataset: SampleEHRDataset,
-        feature_keys: List[str],
-        label_key: str,
-        mode: str,
-        pretrained_emb: str = None,
+        dataset: SampleDataset,
         embedding_dim: int = 128,
         hidden_dim: int = 128,
         n_layers: int = 2,
         activation: str = "relu",
         **kwargs,
     ):
-        super(MLP, self).__init__(
-            dataset=dataset,
-            feature_keys=feature_keys,
-            label_key=label_key,
-            mode=mode,
-            pretrained_emb=pretrained_emb,
-        )
+        super(MLP, self).__init__(dataset)
         self.embedding_dim = embedding_dim
         self.hidden_dim = hidden_dim
         self.n_layers = n_layers
 
-        # validate kwargs for RNN layer
+        # validate kwargs for MLP layer
         if "input_size" in kwargs:
             raise ValueError("input_size is determined by embedding_dim")
         if "hidden_size" in kwargs:
             raise ValueError("hidden_size is determined by hidden_dim")
 
-        # the key of self.feat_tokenizers only contains the code based inputs
-        self.feat_tokenizers = {}
-        self.label_tokenizer = self.get_label_tokenizer()
-        # the key of self.embeddings only contains the code based inputs
-        self.embeddings = nn.ModuleDict()
-        # the key of self.linear_layers only contains the float/int based inputs
-        self.linear_layers = nn.ModuleDict()
+        assert len(self.label_keys) == 1, "Only one label key is supported"
+        self.label_key = self.label_keys[0]
 
-        # add feature MLP layers
-        for feature_key in self.feature_keys:
-            input_info = self.dataset.input_info[feature_key]
-            # sanity check
-            if input_info["type"] not in [str, float, int]:
-                raise ValueError(
-                    "MLP only supports str code, float and int as input types"
-                )
-            elif (input_info["type"] == str) and (input_info["dim"] not in [1, 2]):
-                raise ValueError(
-                    "MLP only supports 1-dim or 2-dim str code as input types"
-                )
-            elif (input_info["type"] in [float, int]) and (
-                input_info["dim"] not in [1, 2, 3]
-            ):
-                raise ValueError(
-                    "MLP only supports 1-dim, 2-dim or 3-dim float and int as input types"
-                )
-            # for code based input, we need Type
-            # for float/int based input, we need Type, input_dim
-            self.add_feature_transform_layer(feature_key, input_info)
+        # Use the EmbeddingModel to handle embedding logic
+        self.embedding_model = EmbeddingModel(dataset, embedding_dim)
 
+        # Set up activation function
         if activation == "relu":
             self.activation = nn.ReLU()
         elif activation == "tanh":
@@ -171,8 +143,9 @@ class MLP(BaseModel):
         else:
             raise ValueError(f"Unsupported activation function {activation}")
 
+        # Create MLP layers for each feature
         self.mlp = nn.ModuleDict()
-        for feature_key in feature_keys:
+        for feature_key in self.feature_keys:
             Modules = []
             Modules.append(nn.Linear(self.embedding_dim, self.hidden_dim))
             for _ in range(self.n_layers - 1):
@@ -180,17 +153,20 @@ class MLP(BaseModel):
                 Modules.append(nn.Linear(self.hidden_dim, self.hidden_dim))
             self.mlp[feature_key] = nn.Sequential(*Modules)
 
-        output_size = self.get_output_size(self.label_tokenizer)
+        output_size = self.get_output_size()
         self.fc = nn.Linear(len(self.feature_keys) * self.hidden_dim, output_size)
 
     @staticmethod
     def mean_pooling(x, mask):
         """Mean pooling over the middle dimension of the tensor.
+
         Args:
             x: tensor of shape (batch_size, seq_len, embedding_dim)
             mask: tensor of shape (batch_size, seq_len)
+
         Returns:
             x: tensor of shape (batch_size, embedding_dim)
+
         Examples:
             >>> x.shape
             [128, 5, 32]
@@ -201,12 +177,14 @@ class MLP(BaseModel):
 
     @staticmethod
     def sum_pooling(x):
-        """Mean pooling over the middle dimension of the tensor.
+        """Sum pooling over the middle dimension of the tensor.
+
         Args:
             x: tensor of shape (batch_size, seq_len, embedding_dim)
-            mask: tensor of shape (batch_size, seq_len)
+
         Returns:
             x: tensor of shape (batch_size, embedding_dim)
+
         Examples:
             >>> x.shape
             [128, 5, 32]
@@ -215,118 +193,205 @@ class MLP(BaseModel):
         """
         return x.sum(dim=1)
 
-    def forward(self, **kwargs) -> Dict[str, torch.Tensor]:
-        """Forward propagation.
+    def forward_from_embedding(
+        self,
+        **kwargs: torch.Tensor | tuple[torch.Tensor, ...],
+    ) -> Dict[str, torch.Tensor]:
+        """Forward pass starting from feature embeddings.
 
-        The label `kwargs[self.label_key]` is a list of labels for each patient.
+        This method bypasses the embedding layers and processes
+        pre-embedded features. This is useful for interpretability
+        methods like Integrated Gradients that need to interpolate
+        in embedding space.
 
         Args:
             **kwargs: keyword arguments for the model. The keys must contain
                 all the feature keys and the label key.
 
+                It is expected to contain the following semantic tensors:
+                    - "value": the embedded feature tensor of shape
+                      [batch, seq_len, embedding_dim] or
+                      [batch, embedding_dim].
+                    - "mask" (optional): the mask tensor of shape
+                      [batch, seq_len]. If not in the processor schema,
+                      it can be provided as the last element of the
+                      feature tuple. If not provided, masks will be
+                      generated from the embedded values (non-zero
+                      entries are treated as valid).
+
+                The label key should contain the true labels for loss
+                computation.
+
         Returns:
             A dictionary with the following keys:
-                loss: a scalar tensor representing the loss.
-                y_prob: a tensor representing the predicted probabilities.
+                loss: a scalar tensor representing the final loss.
+                y_prob: a tensor of predicted probabilities.
                 y_true: a tensor representing the true labels.
+                logit: the raw logits before activation.
+                embed: (if embed=True in kwargs) the patient embedding.
         """
         patient_emb = []
+
         for feature_key in self.feature_keys:
-            input_info = self.dataset.input_info[feature_key]
-            dim_, type_ = input_info["dim"], input_info["type"]
+            processor = self.dataset.input_processors[feature_key]
+            schema = processor.schema()
+            feature = kwargs[feature_key]
 
-            # for case 1: [code1, code2, code3, ...]
-            if (dim_ == 2) and (type_ == str):
-                x = self.feat_tokenizers[feature_key].batch_encode_2d(
-                    kwargs[feature_key]
+            if isinstance(feature, torch.Tensor):
+                # Backward compatibility: if feature is a tensor, treat it
+                # as values without mask
+                feature = (feature,)
+
+            value = feature[schema.index("value")] if "value" in schema else None
+            mask = feature[schema.index("mask")] if "mask" in schema else None
+
+            if len(feature) == len(schema) + 1 and mask is None:
+                # An optional mask can be provided as the last element
+                # if not included in the schema
+                mask = feature[-1]
+
+            if value is None:
+                raise ValueError(
+                    f"Feature '{feature_key}' must contain 'value' "
+                    f"in the schema."
                 )
-                # (patient, event)
-                x = torch.tensor(x, dtype=torch.long, device=self.device)
-                # (patient, event, embedding_dim)
-                x = self.embeddings[feature_key](x)
-                # (patient, event)
-                mask = torch.any(x !=0, dim=2)
-                # (patient, embedding_dim)
-                x = self.mean_pooling(x, mask)
-
-            # for case 2: [[code1, code2], [code3, ...], ...]
-            elif (dim_ == 3) and (type_ == str):
-                x = self.feat_tokenizers[feature_key].batch_encode_3d(
-                    kwargs[feature_key]
-                )
-                # (patient, visit, event)
-                x = torch.tensor(x, dtype=torch.long, device=self.device)
-                # (patient, visit, event, embedding_dim)
-                x = self.embeddings[feature_key](x)
-                # (patient, visit, embedding_dim)
-                x = torch.sum(x, dim=2)
-                # (patient, visit)
-                mask = torch.any(x !=0, dim=2)
-                # (patient, embedding_dim)
-                x = self.mean_pooling(x, mask)
-
-            # for case 3: [1.5, 2.0, 0.0]
-            elif (dim_ == 1) and (type_ in [float, int]):
-                # (patient, values)
-                x = torch.tensor(
-                    kwargs[feature_key], dtype=torch.float, device=self.device
-                )
-                # (patient, embedding_dim)
-                x = self.linear_layers[feature_key](x)
-
-            # for case 4: [[1.5, 2.0, 0.0], ...]
-            elif (dim_ == 2) and (type_ in [float, int]):
-                x, mask = self.padding2d(kwargs[feature_key])
-                # (patient, event, values)
-                x = torch.tensor(x, dtype=torch.float, device=self.device)
-                # (patient, event, embedding_dim)
-                x = self.linear_layers[feature_key](x)
-                # (patient, event)
-                mask = torch.tensor(mask, dtype=torch.bool, device=self.device)
-                # (patient, embedding_dim)
-                x = self.mean_pooling(x, mask)
-
-            # for case 5: [[[1.5, 2.0, 0.0], [1.8, 2.4, 6.0]], ...]
-            elif (dim_ == 3) and (type_ in [float, int]):
-                x, mask = self.padding3d(kwargs[feature_key])
-                # (patient, visit, event, values)
-                x = torch.tensor(x, dtype=torch.float, device=self.device)
-                # (patient, visit, embedding_dim)
-                x = self.linear_layers[feature_key](x)
-                # (patient, event)
-                mask = torch.tensor(mask, dtype=torch.bool, device=self.device)
-                # (patient, embedding_dim)
-                x = self.mean_pooling(x, mask)
-
             else:
-                raise NotImplementedError
+                value = value.to(self.device)
 
-            if self.pretrained_emb != None:
-                x = self.linear_layers[feature_key](x)
-                
+            # Handle different tensor dimensions for pooling
+            if value.dim() == 3:
+                # Case: (batch, seq_len, embedding_dim) - apply mean pooling
+                if mask is None:
+                    mask = (value.abs().sum(dim=-1) != 0).float()
+                else:
+                    mask = mask.to(self.device).float()
+                    if mask.dim() == value.dim():
+                        # Collapse feature dim from mask
+                        mask = mask.any(dim=-1).float()
+                x = self.mean_pooling(value, mask)
+            elif value.dim() == 2:
+                # Case: (batch, embedding_dim) - already pooled, use as is
+                x = value
+            else:
+                raise ValueError(
+                    f"Unsupported tensor dimension: {value.dim()}"
+                )
+
+            # Apply MLP
             x = self.mlp[feature_key](x)
             patient_emb.append(x)
 
         patient_emb = torch.cat(patient_emb, dim=1)
+
         # (patient, label_size)
         logits = self.fc(patient_emb)
-        # obtain y_true, loss, y_prob
-        y_true = self.prepare_labels(kwargs[self.label_key], self.label_tokenizer)
-        loss = self.get_loss_function()(logits, y_true)
         y_prob = self.prepare_y_prob(logits)
+
         results = {
-            "loss": loss,
-            "y_prob": y_prob,
-            "y_true": y_true,
             "logit": logits,
+            "y_prob": y_prob,
         }
+
+        # obtain y_true, loss, y_prob
+        if self.label_key in kwargs:
+            y_true = cast(torch.Tensor, kwargs[self.label_key]).to(self.device)
+            loss = self.get_loss_function()(logits, y_true)
+            results["loss"] = loss
+            results["y_true"] = y_true
+
+        # Optionally return embeddings
         if kwargs.get("embed", False):
             results["embed"] = patient_emb
         return results
 
+    def forward(
+        self, **kwargs: torch.Tensor | tuple[torch.Tensor, ...]
+    ) -> Dict[str, torch.Tensor]:
+        """Forward propagation.
+
+        Args:
+            **kwargs: keyword arguments for the model.
+
+                The keys must contain all the feature keys and the label key.
+
+                Feature keys should contain tensors or tuples of tensors
+                following the processor schema. The label key should
+                contain the true labels for loss computation.
+
+        Returns:
+            A dictionary with the following keys:
+                loss: a scalar tensor representing the final loss.
+                y_prob: a tensor of predicted probabilities.
+                y_true: a tensor representing the true labels.
+                logit: the raw logits before activation.
+                embed: (if embed=True in kwargs) the patient embedding.
+        """
+        for feature_key in self.feature_keys:
+            feature = kwargs[feature_key]
+
+            if isinstance(feature, torch.Tensor):
+                # Backward compatibility: if feature is a tensor, treat it
+                # as values without mask
+                feature = (feature,)
+
+            schema = self.dataset.input_processors[feature_key].schema()
+
+            value = (
+                feature[schema.index("value")] if "value" in schema else None
+            )
+            mask = feature[schema.index("mask")] if "mask" in schema else None
+
+            if value is None:
+                raise ValueError(
+                    f"Feature '{feature_key}' must contain 'value' "
+                    f"in the schema."
+                )
+            else:
+                value = value.to(self.device)
+
+            # Handle 3D input: (batch, event, # of codes) -> flatten to 2D
+            # before embedding to treat all codes as a single flat sequence
+            if value.dim() == 3:
+                batch_size, seq_len, inner_len = value.shape
+                value = value.view(batch_size, seq_len * inner_len)
+                if mask is not None:
+                     mask = mask.to(self.device)
+                     # Flatten mask properly if it exists
+                     if mask.dim() == 3:
+                         mask = mask.view(batch_size, seq_len * inner_len)
+
+            if mask is not None:
+                mask = mask.to(self.device)
+                value = self.embedding_model({feature_key: value}, masks={feature_key: mask})[feature_key]
+            else:
+                value = self.embedding_model({feature_key: value})[feature_key]
+
+            i = schema.index("value")
+            # We replace 'value' in the tuple with the embedded value
+            # But we must ensure other elements are preserved.
+            
+            # If mask was present, we keep it? 
+            # forward_from_embedding expects (value, mask) or (value,)
+            # The embedded value is now the "value".
+            # If we pass mask to forward_from_embedding, it will be used for pooling.
+            
+            args = list(feature)
+            args[i] = value
+            kwargs[feature_key] = tuple(args)
+
+        return self.forward_from_embedding(**kwargs)
+
+    def get_embedding_model(self) -> nn.Module | None:
+        """Get the embedding model.
+
+        Returns:
+            nn.Module: The embedding model used to embed raw features.
+        """
+        return self.embedding_model
+
 
 if __name__ == "__main__":
-    from pyhealth.datasets import SampleEHRDataset
+    from pyhealth.datasets import create_sample_dataset
 
     samples = [
         {
@@ -345,8 +410,20 @@ if __name__ == "__main__":
         },
     ]
 
+    # Define input and output schemas
+    input_schema = {
+        "conditions": "sequence",  # sequence of condition codes
+        "procedures": "timeseries",  # timeseries of procedure values
+    }
+    output_schema = {"label": "binary"}  # binary classification
+
     # dataset
-    dataset = SampleEHRDataset(samples=samples, dataset_name="test")
+    dataset = create_sample_dataset(
+        samples=samples,
+        input_schema=input_schema,
+        output_schema=output_schema,
+        dataset_name="test",
+    )
 
     # data loader
     from pyhealth.datasets import get_dataloader
@@ -354,12 +431,7 @@ if __name__ == "__main__":
     train_loader = get_dataloader(dataset, batch_size=2, shuffle=True)
 
     # model
-    model = MLP(
-        dataset=dataset,
-        feature_keys=["conditions", "procedures"],
-        label_key="label",
-        mode="binary",
-    )
+    model = MLP(dataset=dataset)
 
     # data batch
     data_batch = next(iter(train_loader))
@@ -368,6 +440,5 @@ if __name__ == "__main__":
     ret = model(**data_batch)
     print(ret)
 
-    # TODO: the loss back propagation step seems slow.
     # try loss backward
     ret["loss"].backward()
