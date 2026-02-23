@@ -21,6 +21,12 @@ from .drug_recommendation import (
     drug_recommendation_mimic4_fn,
     drug_recommendation_omop_fn,
 )
+from .halo_generation import (
+    HaloGenerationMIMIC3,
+    HaloGenerationMIMIC4,
+    halo_generation_mimic3_fn,
+    halo_generation_mimic4_fn,
+)
 from .EEG_abnormal import EEG_isAbnormal_fn
 from .EEG_events import EEG_events_fn
 from .in_hospital_mortality_mimic4 import InHospitalMortalityMIMIC4
