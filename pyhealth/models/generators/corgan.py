@@ -469,7 +469,7 @@ class CorGAN(BaseModel):
         Generative Adversarial Networks", JAMIA 2019.
 
     Args:
-        dataset: A fitted SampleDataset with ``input_schema = {"visits": "multi_hot"}``.
+        dataset (SampleDataset): A fitted SampleDataset with ``input_schema = {"visits": "multi_hot"}``.
         latent_dim: Dimensionality of the generator latent space. Default: 128.
         hidden_dim: Hidden dimension for the generator MLP. Default: 128.
         batch_size: Training batch size. Default: 512.
@@ -627,6 +627,9 @@ class CorGAN(BaseModel):
             train_dataset: A fitted SampleDataset with
                 ``input_schema = {"visits": "multi_hot"}``.
             val_dataset: Unused. Accepted for API compatibility.
+
+        Returns:
+            None
         """
         print("Starting CorGAN training...")
 
@@ -777,9 +780,10 @@ class CorGAN(BaseModel):
             random_sampling: Unused; accepted for API compatibility.
 
         Returns:
-            List of dicts, each with:
+            list of dict: Synthetic patient records. Each dict has:
                 ``"patient_id"`` (str): e.g. ``"synthetic_0"``.
                 ``"visits"`` (list of str): flat list of decoded ICD code strings.
+                    May be empty if the generated vector has all values below the 0.5 threshold.
         """
         # set models to eval mode
         self.generator.eval()
