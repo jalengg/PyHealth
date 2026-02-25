@@ -387,5 +387,73 @@ class TestHALOSynthesizeDataset(unittest.TestCase):
             self.assertIn("visits", item)
 
 
+class TestHALOTrainModelVariableVisits(unittest.TestCase):
+    """Tests that train_model() handles patients with different visit counts."""
+
+    def _make_variable_visit_dataset(self, processor):
+        """Build a dataset-like object whose items have different visit counts.
+
+        Patient p1 has 2 visits, patient p2 has 3 visits. Without a custom
+        collate_fn the default torch.stack would raise RuntimeError because
+        the visit-dimension sizes differ.
+        """
+        max_inner = processor._max_inner_len
+
+        item_p1 = {
+            "patient_id": "p1",
+            "visits": torch.zeros(2, max_inner, dtype=torch.long),
+        }
+        item_p1["visits"][0, 0] = processor.code_vocab.get("A", 0)
+        item_p1["visits"][1, 0] = processor.code_vocab.get("B", 0)
+
+        item_p2 = {
+            "patient_id": "p2",
+            "visits": torch.zeros(3, max_inner, dtype=torch.long),
+        }
+        item_p2["visits"][0, 0] = processor.code_vocab.get("A", 0)
+        item_p2["visits"][1, 0] = processor.code_vocab.get("C", 0)
+        item_p2["visits"][2, 0] = processor.code_vocab.get("E", 0)
+
+        samples = [item_p1, item_p2]
+
+        class _ListDataset:
+            """Minimal map-style dataset backed by a plain list."""
+            def __init__(self, items):
+                self._items = items
+                self.input_schema = {"visits": "nested_sequence"}
+                self.output_schema = {}
+                self.input_processors = {"visits": processor}
+                self.output_processors = {}
+
+            def __len__(self):
+                return len(self._items)
+
+            def __getitem__(self, idx):
+                return self._items[idx]
+
+        return _ListDataset(samples)
+
+    def test_train_model_variable_visit_counts_no_error(self):
+        """train_model() with patients having different visit counts must not raise RuntimeError."""
+        base_dataset, processor = _make_mock_dataset()
+        model = HALO(
+            dataset=base_dataset,
+            embed_dim=16,
+            n_heads=2,
+            n_layers=2,
+            n_ctx=12,
+            epochs=1,
+            batch_size=2,
+        )
+
+        train_dataset = self._make_variable_visit_dataset(processor)
+
+        # Should complete without raising RuntimeError from collate
+        try:
+            model.train_model(train_dataset, val_dataset=None)
+        except RuntimeError as e:
+            self.fail(f"train_model() raised RuntimeError with variable visit counts: {e}")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,7 @@
 import os
 import numpy as np
 import torch
+from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from typing import Dict, List, Optional
@@ -9,6 +10,18 @@ from pyhealth.models import BaseModel
 
 from pyhealth.models.generators.halo_resources.halo_model import HALOModel
 from pyhealth.models.generators.halo_resources.halo_config import HALOConfig
+
+
+def _halo_collate_fn(batch):
+    """Collate HALO samples, padding the visit dimension across the batch."""
+    visits = pad_sequence(
+        [item["visits"] for item in batch],
+        batch_first=True,
+        padding_value=0,
+    )
+    collated = {k: v for k, v in batch[0].items() if k != "visits"}
+    collated["visits"] = visits
+    return collated
 
 
 class HALO(BaseModel):
@@ -134,8 +147,8 @@ class HALO(BaseModel):
 
             # Special tokens (label_vocab_size == 0, so the 3 extras are contiguous):
             batch_ehr[i, 0, cfg.code_vocab_size + cfg.label_vocab_size] = 1       # start
-            batch_ehr[i, n_visits + 1, cfg.code_vocab_size + cfg.label_vocab_size + 1] = 1  # end
-            batch_ehr[i, n_visits + 2:, cfg.code_vocab_size + cfg.label_vocab_size + 2] = 1  # pad
+            batch_ehr[i, n_visits + 2, cfg.code_vocab_size + cfg.label_vocab_size + 1] = 1  # end
+            batch_ehr[i, n_visits + 3:, cfg.code_vocab_size + cfg.label_vocab_size + 2] = 1  # pad
 
         batch_mask[:, 1] = 1           # label-position mask row
         batch_mask = batch_mask[:, 1:, :]  # shift mask to align with shifted labels/preds
@@ -202,6 +215,7 @@ class HALO(BaseModel):
             batch_size=self._batch_size,
             shuffle=True,
             drop_last=False,
+            collate_fn=_halo_collate_fn,
         )
 
         global_loss = 1e10
@@ -230,6 +244,7 @@ class HALO(BaseModel):
                     batch_size=self._batch_size,
                     shuffle=False,
                     drop_last=False,
+                    collate_fn=_halo_collate_fn,
                 )
                 val_losses = []
                 with torch.no_grad():
