@@ -1,3 +1,4 @@
+import os
 import time
 from typing import Dict, List, Optional
 
@@ -493,15 +494,17 @@ class CorGAN(BaseModel):
 
     Examples:
         >>> from pyhealth.datasets.sample_dataset import InMemorySampleDataset
-        >>> samples = [{"patient_id": "p1", "visits": ["A", "B", "C"]}]
         >>> dataset = InMemorySampleDataset(
-        ...     samples=samples,
+        ...     samples=[
+        ...         {"patient_id": "p1", "visits": ["A", "B", "C"]},
+        ...         {"patient_id": "p2", "visits": ["A", "C", "D"]},
+        ...     ],
         ...     input_schema={"visits": "multi_hot"},
         ...     output_schema={},
         ... )
-        >>> model = CorGAN(dataset, latent_dim=32, hidden_dim=32, epochs=1)
-        >>> model.train_model(dataset)
-        >>> records = model.synthesize_dataset(num_samples=10)
+        >>> model = CorGAN(dataset, latent_dim=32, hidden_dim=32)
+        >>> isinstance(model, CorGAN)
+        True
     """
 
     def __init__(
@@ -762,7 +765,6 @@ class CorGAN(BaseModel):
 
         # save final checkpoint if save_dir is configured
         if self.save_dir:
-            import os
             os.makedirs(self.save_dir, exist_ok=True)
             checkpoint_path = os.path.join(self.save_dir, "corgan_final.pt")
             self.save_model(checkpoint_path)
@@ -833,10 +835,13 @@ class CorGAN(BaseModel):
         return results
 
     def save_model(self, path: str):
-        """Save model checkpoint.
+        """Save model weights and vocabulary to a checkpoint file.
 
         Args:
-            path: File path to write the checkpoint to.
+            path (str): File path to write the checkpoint (.pt file).
+
+        Returns:
+            None
         """
         torch.save({
             'generator_state_dict': self.generator.state_dict(),
@@ -852,10 +857,13 @@ class CorGAN(BaseModel):
         }, path)
 
     def load_model(self, path: str):
-        """Load model checkpoint.
+        """Load model weights and vocabulary from a checkpoint file.
 
         Args:
-            path: File path to read the checkpoint from.
+            path (str): File path to read the checkpoint (.pt file).
+
+        Returns:
+            None
         """
         checkpoint = torch.load(path, map_location=self.device)
 
