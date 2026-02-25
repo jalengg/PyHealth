@@ -1,21 +1,17 @@
-import functools
-from typing import Dict, List, Optional, Tuple, Union
+import time
+from typing import Dict, List, Optional
+
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
-import random
-import time
 
-from pyhealth.datasets import BaseDataset
 from pyhealth.models import BaseModel
-from pyhealth.tokenizer import Tokenizer
 
 
 class CorGANDataset(Dataset):
     """Dataset wrapper for CorGAN training"""
-    
+
     def __init__(self, data, transform=None):
         self.transform = transform
         self.data = data.astype(np.float32)
@@ -50,7 +46,7 @@ class CorGANAutoencoder(nn.Module):
         self.latent_dim = latent_dim
         self.use_adaptive_pooling = use_adaptive_pooling
         n_channels_base = 4
-        
+
         # calculate the size after convolutions
         # input: (batch, 1, feature_size)
         # conv1: kernel=5, stride=2 -> (batch, 4, (feature_size-4)//2)
@@ -59,10 +55,10 @@ class CorGANAutoencoder(nn.Module):
         # conv4: kernel=5, stride=3 -> (batch, 32, ((((feature_size-4)//2-4)//2-4)//3-4)//3)
         # conv5: kernel=5, stride=3 -> (batch, 64, (((((feature_size-4)//2-4)//2-4)//3-4)//3-4)//3)
         # conv6: kernel=8, stride=1 -> (batch, 128, ((((((feature_size-4)//2-4)//2-4)//3-4)//3-4)//3-7))
-        
+
         # rough estimate for latent size
         latent_size = max(1, feature_size // 100)  # ensure at least 1
-        
+
         self.encoder = nn.Sequential(
             nn.Conv1d(in_channels=1, out_channels=n_channels_base, kernel_size=5, stride=2, padding=0, dilation=1,
                       groups=1, bias=True, padding_mode='zeros'),
@@ -170,84 +166,84 @@ class CorGAN8LayerAutoencoder(nn.Module):
         self.feature_size = feature_size
         self.latent_dim = latent_dim
 
-        # Encoder: 6955 → 1 (8 layers)
+        # Encoder: 6955 -> 1 (8 layers)
         self.encoder = nn.Sequential(
-            # Layer 1: 6955 → 3476
+            # Layer 1: 6955 -> 3476
             nn.Conv1d(1, 4, kernel_size=5, stride=2, padding=0),
             nn.LeakyReLU(0.2, inplace=True),
 
-            # Layer 2: 3476 → 1736
+            # Layer 2: 3476 -> 1736
             nn.Conv1d(4, 8, kernel_size=5, stride=2, padding=0),
             nn.BatchNorm1d(8),
             nn.LeakyReLU(0.2, inplace=True),
 
-            # Layer 3: 1736 → 578
+            # Layer 3: 1736 -> 578
             nn.Conv1d(8, 16, kernel_size=5, stride=3, padding=0),
             nn.BatchNorm1d(16),
             nn.LeakyReLU(0.2, inplace=True),
 
-            # Layer 4: 578 → 192
+            # Layer 4: 578 -> 192
             nn.Conv1d(16, 32, kernel_size=5, stride=3, padding=0),
             nn.BatchNorm1d(32),
             nn.LeakyReLU(0.2, inplace=True),
 
-            # Layer 5: 192 → 63
+            # Layer 5: 192 -> 63
             nn.Conv1d(32, 64, kernel_size=5, stride=3, padding=0),
             nn.BatchNorm1d(64),
             nn.LeakyReLU(0.2, inplace=True),
 
-            # Layer 6: 63 → 20 [NEW]
+            # Layer 6: 63 -> 20 [NEW]
             nn.Conv1d(64, 96, kernel_size=5, stride=3, padding=0),
             nn.BatchNorm1d(96),
             nn.LeakyReLU(0.2, inplace=True),
 
-            # Layer 7: 20 → 4 [NEW]
+            # Layer 7: 20 -> 4 [NEW]
             nn.Conv1d(96, 112, kernel_size=5, stride=4, padding=0),
             nn.BatchNorm1d(112),
             nn.LeakyReLU(0.2, inplace=True),
 
-            # Layer 8: 4 → 1 [NEW]
+            # Layer 8: 4 -> 1 [NEW]
             nn.Conv1d(112, 128, kernel_size=4, stride=1, padding=0),
             nn.Tanh(),
         )
 
-        # Decoder: 1 → 6955 (8 layers)
+        # Decoder: 1 -> 6955 (8 layers)
         self.decoder = nn.Sequential(
-            # Layer 1: 1 → 4 (NO BatchNorm on first layer)
+            # Layer 1: 1 -> 4 (NO BatchNorm on first layer)
             nn.ConvTranspose1d(128, 112, kernel_size=4, stride=1, padding=0),
             nn.ReLU(),
 
-            # Layer 2: 4 → 20
+            # Layer 2: 4 -> 20
             nn.ConvTranspose1d(112, 96, kernel_size=8, stride=4, padding=0),
             nn.BatchNorm1d(96),
             nn.ReLU(),
 
-            # Layer 3: 20 → 63
+            # Layer 3: 20 -> 63
             nn.ConvTranspose1d(96, 64, kernel_size=6, stride=3, padding=0),
             nn.BatchNorm1d(64),
             nn.ReLU(),
 
-            # Layer 4: 63 → 192
+            # Layer 4: 63 -> 192
             nn.ConvTranspose1d(64, 32, kernel_size=6, stride=3, padding=0),
             nn.BatchNorm1d(32),
             nn.ReLU(),
 
-            # Layer 5: 192 → 578
+            # Layer 5: 192 -> 578
             nn.ConvTranspose1d(32, 16, kernel_size=5, stride=3, padding=0),
             nn.BatchNorm1d(16),
             nn.ReLU(),
 
-            # Layer 6: 578 → 1736
+            # Layer 6: 578 -> 1736
             nn.ConvTranspose1d(16, 8, kernel_size=5, stride=3, padding=0),
             nn.BatchNorm1d(8),
             nn.ReLU(),
 
-            # Layer 7: 1736 → 3476
+            # Layer 7: 1736 -> 3476
             nn.ConvTranspose1d(8, 4, kernel_size=6, stride=2, padding=0),
             nn.BatchNorm1d(4),
             nn.ReLU(),
 
-            # Layer 8: 3476 → 6955
+            # Layer 8: 3476 -> 6955
             nn.ConvTranspose1d(4, 1, kernel_size=5, stride=2, padding=0),
             nn.Sigmoid(),
         )
@@ -297,7 +293,7 @@ class CorGANLinearAutoencoder(nn.Module):
         self.feature_size = feature_size
         self.latent_dim = latent_dim
 
-        # Encoder: feature_size → latent_dim
+        # Encoder: feature_size -> latent_dim
         # Use ReLU+BatchNorm (V11 achieved 4.49 codes, best linear result)
         self.encoder = nn.Sequential(
             nn.Linear(feature_size, latent_dim),
@@ -305,7 +301,7 @@ class CorGANLinearAutoencoder(nn.Module):
             nn.BatchNorm1d(latent_dim)
         )
 
-        # Decoder: latent_dim → feature_size
+        # Decoder: latent_dim -> feature_size
         self.decoder = nn.Sequential(
             nn.Linear(latent_dim, feature_size),
             nn.Sigmoid()
@@ -379,7 +375,7 @@ class CorGANDiscriminator(nn.Module):
     Discriminator for CorGAN - MLP with minibatch averaging
 
     Architecture matches synthEHRella exactly (wgancnnmimic.py lines 265-296):
-    - 4 linear layers: input → 256 → 256 → 256 → 1
+    - 4 linear layers: input -> 256 -> 256 -> 256 -> 1
     - ReLU activations
     - No sigmoid (WGAN uses unbounded critic outputs)
     """
@@ -463,49 +459,58 @@ def discriminator_accuracy(predicted, y_true):
 
 class CorGAN(BaseModel):
     """
-    CorGAN: Correlation-capturing Generative Adversarial Network
-    
+    CorGAN: Correlation-capturing Generative Adversarial Network for synthetic EHR generation.
+
     Uses CNNs to capture correlations between adjacent medical features by combining
     Convolutional GANs with Convolutional Autoencoders.
-    
+
+    Reference:
+        Baowaly et al., "Synthesizing Electronic Health Records Using Improved
+        Generative Adversarial Networks", JAMIA 2019.
+
     Args:
-        dataset: PyHealth dataset object
-        feature_keys: List of feature keys to use
-        label_key: Label key (not used in unsupervised generation)
-        mode: Training mode (not used in GAN context)
-        latent_dim: Dimensionality of latent space
-        hidden_dim: Hidden dimension for networks
-        batch_size: Training batch size
-        n_epochs: Number of training epochs
-        n_epochs_pretrain: Number of autoencoder pretraining epochs
-        lr: Learning rate
-        weight_decay: Weight decay for optimization
-        b1: Beta1 for Adam optimizer
-        b2: Beta2 for Adam optimizer
-        n_iter_D: Number of discriminator iterations per generator iteration
-        clamp_lower: Lower bound for weight clipping
-        clamp_upper: Upper bound for weight clipping
-        minibatch_averaging: Whether to use minibatch averaging in discriminator
-        **kwargs: Additional arguments
-    
+        dataset: A fitted SampleDataset with ``input_schema = {"visits": "nested_sequence"}``.
+        latent_dim: Dimensionality of the generator latent space. Default: 128.
+        hidden_dim: Hidden dimension for the generator MLP. Default: 128.
+        batch_size: Training batch size. Default: 512.
+        epochs: Total GAN training epochs. Default: 1000.
+        n_epochs_pretrain: Autoencoder pre-training epochs. Default: 1.
+        lr: Learning rate for all optimizers. Default: 0.001.
+        weight_decay: Weight decay for Adam optimizers. Default: 0.0001.
+        b1: Beta1 for Adam optimizers. Default: 0.9.
+        b2: Beta2 for Adam optimizers. Default: 0.999.
+        n_iter_D: Discriminator update steps per generator step. Default: 5.
+        clamp_lower: Lower weight-clipping bound for WGAN critic. Default: -0.01.
+        clamp_upper: Upper weight-clipping bound for WGAN critic. Default: 0.01.
+        autoencoder_type: One of ``"cnn"`` (default), ``"cnn8layer"``, or ``"linear"``.
+        use_adaptive_pooling: If True, add adaptive average pooling to the CNN
+            autoencoder decoder so it matches any vocabulary size. Ignored when
+            ``autoencoder_type`` is not ``"cnn"``. Default: True.
+        minibatch_averaging: Whether to use minibatch averaging in the discriminator.
+            Default: True.
+        save_dir: Directory for saving checkpoints. Default: ``"./corgan_checkpoints"``.
+        **kwargs: Additional arguments passed to ``BaseModel``.
+
     Examples:
-        >>> from pyhealth.datasets import MIMIC3Dataset
-        >>> dataset = MIMIC3Dataset(...)
-        >>> model = CorGAN(dataset=dataset, feature_keys=["conditions"])
-        >>> model.fit()
-        >>> synthetic_data = model.generate(n_samples=50000)
+        >>> from pyhealth.datasets.sample_dataset import InMemorySampleDataset
+        >>> samples = [{"patient_id": "p1", "visits": [["A", "B"], ["C"]]}]
+        >>> dataset = InMemorySampleDataset(
+        ...     samples=samples,
+        ...     input_schema={"visits": "nested_sequence"},
+        ...     output_schema={},
+        ... )
+        >>> model = CorGAN(dataset, latent_dim=32, hidden_dim=32, epochs=1)
+        >>> model.train_model(dataset)
+        >>> records = model.synthesize_dataset(num_samples=10)
     """
-    
+
     def __init__(
         self,
-        dataset: BaseDataset,
-        feature_keys: List[str],
-        label_key: str,
-        mode: str = "generation",
+        dataset,
         latent_dim: int = 128,
         hidden_dim: int = 128,
         batch_size: int = 512,
-        n_epochs: int = 1000,
+        epochs: int = 1000,
         n_epochs_pretrain: int = 1,
         lr: float = 0.001,
         weight_decay: float = 0.0001,
@@ -514,21 +519,18 @@ class CorGAN(BaseModel):
         n_iter_D: int = 5,
         clamp_lower: float = -0.01,
         clamp_upper: float = 0.01,
+        autoencoder_type: str = "cnn",
+        use_adaptive_pooling: bool = True,
         minibatch_averaging: bool = True,
+        save_dir: str = "./corgan_checkpoints",
         **kwargs
     ):
-        super(CorGAN, self).__init__(
-            dataset=dataset,
-            feature_keys=feature_keys,
-            label_key=label_key,
-            mode=mode,
-            **kwargs
-        )
-        
+        super(CorGAN, self).__init__(dataset=dataset)
+
         self.latent_dim = latent_dim
         self.hidden_dim = hidden_dim
         self.batch_size = batch_size
-        self.n_epochs = n_epochs
+        self.n_epochs = epochs
         self.n_epochs_pretrain = n_epochs_pretrain
         self.lr = lr
         self.weight_decay = weight_decay
@@ -538,40 +540,53 @@ class CorGAN(BaseModel):
         self.clamp_lower = clamp_lower
         self.clamp_upper = clamp_upper
         self.minibatch_averaging = minibatch_averaging
-        
-        # build unified vocabulary for all feature keys
-        self.global_vocab = self._build_global_vocab(dataset, feature_keys)
-        self.input_dim = len(self.global_vocab)
-        self.tokenizer = Tokenizer(tokens=self.global_vocab, special_tokens=[])
-        
+        self.save_dir = save_dir
+
+        # vocabulary from the dataset's fitted processor
+        processor = dataset.input_processors["visits"]
+        self.input_dim = processor.vocab_size()
+        # build reverse-lookup: integer index -> code string
+        self._idx_to_code: List[Optional[str]] = [None] * self.input_dim
+        for code, idx in processor.code_vocab.items():
+            self._idx_to_code[idx] = code
+
         # initialize components
-        # Determine if adaptive pooling is needed (only for non-standard vocabulary sizes)
-        use_adaptive_pooling = (self.input_dim != 1071)
-        self.autoencoder = CorGANAutoencoder(
-            feature_size=self.input_dim,
-            latent_dim=latent_dim,
-            use_adaptive_pooling=use_adaptive_pooling
-        )
+        if autoencoder_type == "cnn8layer":
+            self.autoencoder = CorGAN8LayerAutoencoder(
+                feature_size=self.input_dim,
+                latent_dim=latent_dim,
+            )
+        elif autoencoder_type == "linear":
+            self.autoencoder = CorGANLinearAutoencoder(
+                feature_size=self.input_dim,
+                latent_dim=latent_dim,
+            )
+        else:
+            self.autoencoder = CorGANAutoencoder(
+                feature_size=self.input_dim,
+                latent_dim=latent_dim,
+                use_adaptive_pooling=use_adaptive_pooling,
+            )
+
         self.autoencoder_decoder = self.autoencoder.decoder  # separate decoder for generator
-        
+
         self.generator = CorGANGenerator(
             latent_dim=latent_dim,
-            hidden_dim=hidden_dim
+            hidden_dim=hidden_dim,
         )
-        
+
         self.discriminator = CorGANDiscriminator(
             input_dim=self.input_dim,
             hidden_dim=256,  # Match synthEHRella exactly (not hidden_dim * 2)
-            minibatch_averaging=minibatch_averaging
+            minibatch_averaging=minibatch_averaging,
         )
-        
+
         # apply custom weight initialization
         self._init_weights()
-        
-        # setup device
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        # move to device (uses BaseModel's device property)
         self.to(self.device)
-        
+
         # setup optimizers
         g_params = [
             {'params': self.generator.parameters()},
@@ -580,247 +595,268 @@ class CorGAN(BaseModel):
         self.optimizer_G = torch.optim.Adam(g_params, lr=lr, betas=(b1, b2), weight_decay=weight_decay)
         self.optimizer_D = torch.optim.Adam(self.discriminator.parameters(), lr=lr, betas=(b1, b2), weight_decay=weight_decay)
         self.optimizer_A = torch.optim.Adam(self.autoencoder.parameters(), lr=lr, betas=(b1, b2), weight_decay=weight_decay)
-        
+
         # setup tensors for training
         self.one = torch.tensor(1.0, device=self.device)
         self.mone = torch.tensor(-1.0, device=self.device)
-    
-    def _build_global_vocab(self, dataset: BaseDataset, feature_keys: List[str]) -> List[str]:
-        """Build unified vocabulary across all feature keys"""
-        global_vocab = set()
-        
-        # collect all unique codes from all patients and feature keys
-        for patient_id in dataset.patients:
-            patient = dataset.patients[patient_id]
-            for feature_key in feature_keys:
-                if feature_key in patient:
-                    for visit in patient[feature_key]:
-                        if isinstance(visit, list):
-                            global_vocab.update(visit)
-                        else:
-                            global_vocab.add(visit)
-        
-        return sorted(list(global_vocab))
-    
-    def _encode_patient_record(self, record: Dict) -> torch.Tensor:
-        """Encode a patient record to binary vector"""
-        # create binary vector
-        binary_vector = np.zeros(self.input_dim, dtype=np.float32)
-        
-        for feature_key in self.feature_keys:
-            if feature_key in record:
-                for visit in record[feature_key]:
-                    if isinstance(visit, list):
-                        for code in visit:
-                            if code in self.global_vocab:
-                                idx = self.global_vocab.index(code)
-                                binary_vector[idx] = 1.0
-                    else:
-                        if visit in self.global_vocab:
-                            idx = self.global_vocab.index(visit)
-                            binary_vector[idx] = 1.0
-        
-        return torch.from_numpy(binary_vector)
-    
+
     def _init_weights(self):
         """Initialize network weights"""
         self.generator.apply(weights_init)
         self.discriminator.apply(weights_init)
         self.autoencoder.apply(weights_init)
-    
-    def _extract_features_from_batch(self, batch_data, device: torch.device) -> torch.Tensor:
-        """Extract features from batch data"""
-        features = []
-        for patient_id in batch_data:
-            patient = self.dataset.patients[patient_id]
-            feature_vector = self._encode_patient_record(patient)
-            features.append(feature_vector)
-        
-        return torch.stack(features).to(device)
-    
+
+    def _encode_samples_to_multihot(self, dataset) -> np.ndarray:
+        """Build a multi-hot binary matrix from a SampleDataset.
+
+        Each row corresponds to one patient sample. All visits are aggregated
+        into a single flat set of codes per patient and encoded as a binary
+        vector of length ``vocab_size``.
+
+        Args:
+            dataset: A fitted SampleDataset whose raw samples contain
+                ``sample["visits"]`` as a list of lists of code strings.
+
+        Returns:
+            np.ndarray of shape ``(n_patients, vocab_size)`` with dtype float32.
+        """
+        processor = self.dataset.input_processors["visits"]
+        code_vocab = processor.code_vocab
+
+        n = len(dataset)
+        matrix = np.zeros((n, self.input_dim), dtype=np.float32)
+
+        for i, sample in enumerate(dataset):
+            # sample["visits"] is the raw nested list from the original dict,
+            # but after SampleDataset processing it may be a tensor.
+            # We need the raw string codes, so access via dataset.samples if
+            # available, otherwise decode from the processed tensor.
+            visits = dataset.samples[i].get("visits", [])
+            for visit in visits:
+                if isinstance(visit, list):
+                    for code in visit:
+                        if code is not None and code in code_vocab:
+                            matrix[i, code_vocab[code]] = 1.0
+
+        return matrix
+
     def forward(self, **kwargs) -> Dict[str, torch.Tensor]:
-        """Forward pass - not used in GAN context"""
-        raise NotImplementedError("Forward pass not implemented for GAN models")
-    
-    def fit(self, train_dataloader: Optional[DataLoader] = None):
-        """Train the CorGAN model"""
+        """Not used in GAN context."""
+        raise NotImplementedError("Forward pass not implemented for GAN models.")
+
+    def train_model(self, train_dataset, val_dataset=None):
+        """Train the CorGAN model on a SampleDataset.
+
+        Builds multi-hot encodings from ``train_dataset``, pre-trains the
+        autoencoder, then runs WGAN adversarial training.
+
+        Args:
+            train_dataset: A fitted SampleDataset with
+                ``input_schema = {"visits": "nested_sequence"}``.
+            val_dataset: Unused. Accepted for API compatibility.
+        """
         print("Starting CorGAN training...")
-        
-        # create dataset and dataloader
-        if train_dataloader is None:
-            # create binary matrix from dataset
-            data_matrix = []
-            for patient_id in self.dataset.patients:
-                patient = self.dataset.patients[patient_id]
-                feature_vector = self._encode_patient_record(patient)
-                data_matrix.append(feature_vector.numpy())
-            
-            data_matrix = np.array(data_matrix)
-            dataset = CorGANDataset(data=data_matrix)
-            
-            sampler = torch.utils.data.sampler.RandomSampler(
-                data_source=dataset, replacement=True
-            )
-            train_dataloader = DataLoader(
-                dataset, 
-                batch_size=self.batch_size,
-                shuffle=False, 
-                num_workers=0, 
-                drop_last=True, 
-                sampler=sampler
-            )
-        
+
+        # build multi-hot matrix from SampleDataset
+        data_matrix = self._encode_samples_to_multihot(train_dataset)
+
+        corgan_ds = CorGANDataset(data=data_matrix)
+        sampler = torch.utils.data.sampler.RandomSampler(
+            data_source=corgan_ds, replacement=True
+        )
+        train_dataloader = DataLoader(
+            corgan_ds,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=0,
+            drop_last=True,
+            sampler=sampler,
+        )
+
         # pretrain autoencoder
         print(f"Pretraining autoencoder for {self.n_epochs_pretrain} epochs...")
         for epoch_pre in range(self.n_epochs_pretrain):
             for i, samples in enumerate(train_dataloader):
                 # configure input
                 real_samples = samples.to(self.device)
-                
+
                 # generate a batch of images
                 recons_samples = self.autoencoder(real_samples)
-                
+
                 # loss measures autoencoder's ability to reconstruct
                 a_loss = autoencoder_loss(recons_samples, real_samples)
-                
+
                 # reset gradients
                 self.optimizer_A.zero_grad()
                 a_loss.backward()
                 self.optimizer_A.step()
-                
+
                 if i % 100 == 0:
                     print(f"[Epoch {epoch_pre + 1}/{self.n_epochs_pretrain}] [Batch {i}/{len(train_dataloader)}] [A loss: {a_loss.item():.3f}]")
-        
+
         # adversarial training
         print(f"Starting adversarial training for {self.n_epochs} epochs...")
         gen_iterations = 0
-        
+
         for epoch in range(self.n_epochs):
             epoch_start = time.time()
-            
+
             for i, samples in enumerate(train_dataloader):
-                # adversarial ground truths
-                valid = torch.ones(samples.shape[0], device=self.device)
-                fake = torch.zeros(samples.shape[0], device=self.device)
-                
                 # configure input
                 real_samples = samples.to(self.device)
-                
+
                 # sample noise as generator input
                 z = torch.randn(samples.shape[0], self.latent_dim, device=self.device)
-                
+
                 # ---------------------
                 #  Train Discriminator
                 # ---------------------
-                
+
                 for p in self.discriminator.parameters():
                     p.requires_grad = True
-                
+
                 # train the discriminator n_iter_D times
                 if gen_iterations < 25 or gen_iterations % 500 == 0:
                     n_iter_D = 100
                 else:
                     n_iter_D = self.n_iter_D
-                
+
                 j = 0
                 while j < n_iter_D:
                     j += 1
-                    
+
                     # clamp parameters to a cube
                     for p in self.discriminator.parameters():
                         p.data.clamp_(self.clamp_lower, self.clamp_upper)
-                    
+
                     # reset gradients of discriminator
                     self.optimizer_D.zero_grad()
-                    
+
                     errD_real = torch.mean(self.discriminator(real_samples), dim=0)
                     errD_real.backward(self.one)
-                    
+
                     # sample noise as generator input
                     z = torch.randn(samples.shape[0], self.latent_dim, device=self.device)
-                    
+
                     # generate a batch of images
                     fake_samples = self.generator(z)
                     fake_samples = torch.squeeze(self.autoencoder_decoder(fake_samples.unsqueeze(dim=2)))
-                    
+
                     errD_fake = torch.mean(self.discriminator(fake_samples.detach()), dim=0)
                     errD_fake.backward(self.mone)
                     errD = errD_real - errD_fake
-                    
+
                     # optimizer step
                     self.optimizer_D.step()
-                
+
                 # -----------------
                 #  Train Generator
                 # -----------------
-                
+
                 for p in self.discriminator.parameters():
                     p.requires_grad = False
-                
+
                 # zero grads
                 self.optimizer_G.zero_grad()
-                
+
                 # sample noise as generator input
                 z = torch.randn(samples.shape[0], self.latent_dim, device=self.device)
-                
+
                 # generate a batch of images
                 fake_samples = self.generator(z)
                 fake_samples = torch.squeeze(self.autoencoder_decoder(fake_samples.unsqueeze(dim=2)))
-                
+
                 # loss measures generator's ability to fool the discriminator
                 errG = torch.mean(self.discriminator(fake_samples), dim=0)
                 errG.backward(self.one)
-                
+
                 # optimizer step
                 self.optimizer_G.step()
                 gen_iterations += 1
-            
+
             # end of epoch
             epoch_end = time.time()
             print(f"[Epoch {epoch + 1}/{self.n_epochs}] [Batch {i}/{len(train_dataloader)}] "
                   f"Loss_D: {errD.item():.3f} Loss_G: {errG.item():.3f} "
                   f"Loss_D_real: {errD_real.item():.3f} Loss_D_fake: {errD_fake.item():.3f}")
             print(f"Epoch time: {epoch_end - epoch_start:.2f} seconds")
-        
+
         print("Training completed!")
-    
-    def generate(self, n_samples: int, device: torch.device = None) -> torch.Tensor:
-        """Generate synthetic data"""
-        if device is None:
-            device = self.device
-        
+
+    def synthesize_dataset(self, num_samples: int, random_sampling: bool = True) -> List[Dict]:
+        """Generate synthetic patient records.
+
+        Each synthetic patient is represented as a single visit containing all
+        generated codes. This is an honest representation of what CorGAN produces —
+        a flat multi-hot vector aggregated across all visits.
+
+        Args:
+            num_samples: Number of synthetic patients to generate.
+            random_sampling: Unused; accepted for API compatibility.
+
+        Returns:
+            List of dicts, each with:
+                ``"patient_id"`` (str): e.g. ``"synthetic_0"``.
+                ``"visits"`` (list of list of str): one visit per patient
+                    containing the decoded ICD codes.
+        """
         # set models to eval mode
         self.generator.eval()
         self.autoencoder_decoder.eval()
-        
-        # generate samples
-        gen_samples = np.zeros((n_samples, self.input_dim), dtype=np.float32)
-        n_batches = int(n_samples / self.batch_size)
-        
+
+        device = self.device
+        gen_samples = np.zeros((num_samples, self.input_dim), dtype=np.float32)
+        n_batches = num_samples // self.batch_size
+
         with torch.no_grad():
             for i in range(n_batches):
-                # sample noise as generator input
                 z = torch.randn(self.batch_size, self.latent_dim, device=device)
                 gen_samples_tensor = self.generator(z)
-                gen_samples_decoded = torch.squeeze(self.autoencoder_decoder(gen_samples_tensor.unsqueeze(dim=2)))
-                gen_samples[i * self.batch_size:(i + 1) * self.batch_size, :] = gen_samples_decoded.cpu().data.numpy()
-        
-        # handle remaining samples
-        remaining = n_samples % self.batch_size
-        if remaining > 0:
-            z = torch.randn(remaining, self.latent_dim, device=device)
-            gen_samples_tensor = self.generator(z)
-            gen_samples_decoded = torch.squeeze(self.autoencoder_decoder(gen_samples_tensor.unsqueeze(dim=2)))
-            gen_samples[n_batches * self.batch_size:, :] = gen_samples_decoded.cpu().data.numpy()
-        
-        # binarize output
+                gen_samples_decoded = torch.squeeze(
+                    self.autoencoder_decoder(gen_samples_tensor.unsqueeze(dim=2))
+                )
+                gen_samples[i * self.batch_size:(i + 1) * self.batch_size, :] = (
+                    gen_samples_decoded.cpu().data.numpy()
+                )
+
+            # handle remaining samples
+            remaining = num_samples % self.batch_size
+            if remaining > 0:
+                z = torch.randn(remaining, self.latent_dim, device=device)
+                gen_samples_tensor = self.generator(z)
+                gen_samples_decoded = torch.squeeze(
+                    self.autoencoder_decoder(gen_samples_tensor.unsqueeze(dim=2))
+                )
+                gen_samples[n_batches * self.batch_size:, :] = (
+                    gen_samples_decoded.cpu().data.numpy()
+                )
+
+        # binarize at threshold 0.5
         gen_samples[gen_samples >= 0.5] = 1.0
         gen_samples[gen_samples < 0.5] = 0.0
-        
-        return torch.from_numpy(gen_samples)
-    
+
+        # decode binary vectors to code strings
+        results: List[Dict] = []
+        for i in range(num_samples):
+            row = gen_samples[i]
+            codes = [
+                self._idx_to_code[idx]
+                for idx in np.where(row == 1.0)[0]
+                if self._idx_to_code[idx] not in (None, "<pad>", "<unk>")
+            ]
+            results.append({
+                "patient_id": f"synthetic_{i}",
+                "visits": [codes],
+            })
+
+        return results
+
     def save_model(self, path: str):
-        """Save model checkpoint"""
+        """Save model checkpoint.
+
+        Args:
+            path: File path to write the checkpoint to.
+        """
         torch.save({
             'generator_state_dict': self.generator.state_dict(),
             'discriminator_state_dict': self.discriminator.state_dict(),
@@ -829,15 +865,19 @@ class CorGAN(BaseModel):
             'optimizer_G_state_dict': self.optimizer_G.state_dict(),
             'optimizer_D_state_dict': self.optimizer_D.state_dict(),
             'optimizer_A_state_dict': self.optimizer_A.state_dict(),
-            'global_vocab': self.global_vocab,
+            'idx_to_code': self._idx_to_code,
             'input_dim': self.input_dim,
             'latent_dim': self.latent_dim,
         }, path)
-    
+
     def load_model(self, path: str):
-        """Load model checkpoint"""
+        """Load model checkpoint.
+
+        Args:
+            path: File path to read the checkpoint from.
+        """
         checkpoint = torch.load(path, map_location=self.device)
-        
+
         self.generator.load_state_dict(checkpoint['generator_state_dict'])
         self.discriminator.load_state_dict(checkpoint['discriminator_state_dict'])
         self.autoencoder.load_state_dict(checkpoint['autoencoder_state_dict'])
@@ -845,7 +885,7 @@ class CorGAN(BaseModel):
         self.optimizer_G.load_state_dict(checkpoint['optimizer_G_state_dict'])
         self.optimizer_D.load_state_dict(checkpoint['optimizer_D_state_dict'])
         self.optimizer_A.load_state_dict(checkpoint['optimizer_A_state_dict'])
-        
-        self.global_vocab = checkpoint['global_vocab']
+
+        self._idx_to_code = checkpoint['idx_to_code']
         self.input_dim = checkpoint['input_dim']
-        self.latent_dim = checkpoint['latent_dim'] 
+        self.latent_dim = checkpoint['latent_dim']
