@@ -359,5 +359,33 @@ class TestHALOInit(unittest.TestCase):
         self.assertEqual(model.config.epoch, 10)
 
 
+class TestHALOSynthesizeDataset(unittest.TestCase):
+    """Tests for HALO.synthesize_dataset()."""
+
+    def setUp(self):
+        self.dataset, self.processor = _make_mock_dataset()
+        self.model = HALO(
+            dataset=self.dataset,
+            embed_dim=32,
+            n_heads=2,
+            n_layers=1,
+            n_ctx=8,
+        )
+
+    def test_synthesize_dataset_returns_list_of_correct_length(self):
+        """synthesize_dataset(num_samples=2) must return a list of length 2."""
+        result = self.model.synthesize_dataset(num_samples=2)
+        self.assertIsInstance(result, list)
+        self.assertEqual(len(result), 2)
+
+    def test_synthesize_dataset_items_have_required_keys(self):
+        """Each item in the result must be a dict with 'patient_id' and 'visits'."""
+        result = self.model.synthesize_dataset(num_samples=2)
+        for item in result:
+            self.assertIsInstance(item, dict)
+            self.assertIn("patient_id", item)
+            self.assertIn("visits", item)
+
+
 if __name__ == "__main__":
     unittest.main()
