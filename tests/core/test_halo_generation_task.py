@@ -305,7 +305,15 @@ class TestHaloGenerationMIMIC3Integration(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         try:
+            import inspect
+
             from pyhealth.datasets import MIMIC3Dataset
+
+            if not inspect.isclass(MIMIC3Dataset):
+                raise ImportError(
+                    "pyhealth.datasets.MIMIC3Dataset is not a real class "
+                    "(stub injected by another test module); skipping integration tests."
+                )
 
             demo_path = str(
                 Path(__file__).parent.parent.parent
