@@ -9,15 +9,17 @@ class CorGANGenerationMIMIC3(BaseTask):
     """Task function for CorGAN synthetic EHR generation using MIMIC-III.
 
     Extracts ICD-9 diagnosis codes from MIMIC-III admission records into a
-    nested visit structure suitable for training the CorGAN model.
+    flat list of codes suitable for training the CorGAN model.
 
-    Each sample contains the full visit history for a single patient, where
-    each visit is a list of ICD-9 codes recorded during that admission.
-    Patients with fewer than 2 visits are excluded.
+    CorGAN is a bag-of-codes model: it collapses all visit codes for a patient
+    into a single binary vector, so visit structure is irrelevant. All codes
+    from all admissions are pooled into one flat list per patient.
+    Patients with no codes are excluded.
 
     Attributes:
         task_name (str): Unique task identifier.
-        input_schema (dict): Schema descriptor for the visits field.
+        input_schema (dict): Schema descriptor — ``"visits"`` field uses
+            ``"multi_hot"`` encoding (flat list of code strings).
         output_schema (dict): Empty — generative task, no conditioning label.
         _icd_col (str): Polars column path for ICD codes in MIMIC-III.
 
@@ -28,12 +30,16 @@ class CorGANGenerationMIMIC3(BaseTask):
     """
 
     task_name = "CorGANGenerationMIMIC3"
-    input_schema = {"visits": "nested_sequence"}
+    input_schema = {"visits": "multi_hot"}
     output_schema = {}
     _icd_col = "diagnoses_icd/icd9_code"
 
     def __call__(self, patient) -> List[Dict]:
-        """Extract structured visit data for a single patient.
+        """Extract flat code list for a single patient.
+
+        All ICD codes from all admissions are pooled into a single flat list.
+        Visit temporal structure is discarded because CorGAN operates on a
+        single multi-hot binary vector per patient.
 
         Args:
             patient: A PyHealth patient object with admission and diagnosis
@@ -41,13 +47,14 @@ class CorGANGenerationMIMIC3(BaseTask):
 
         Returns:
             list of dict: A single-element list containing the patient record,
-                or an empty list if the patient has fewer than 2 visits with
-                diagnosis codes. Each dict has:
+                or an empty list if the patient has no diagnosis codes. Each
+                dict has:
             ``"patient_id"`` (str): the patient identifier.
-            ``"visits"`` (list of list of str): per-visit ICD code lists.
+            ``"visits"`` (list of str): flat list of all ICD codes across all
+                admissions.
         """
         admissions = list(patient.get_events(event_type="admissions"))
-        visits = []
+        all_codes = []
         for adm in admissions:
             codes = (
                 patient.get_events(
@@ -60,11 +67,10 @@ class CorGANGenerationMIMIC3(BaseTask):
                 .drop_nulls()
                 .to_list()
             )
-            if codes:
-                visits.append(codes)
-        if len(visits) < 2:
+            all_codes.extend(codes)
+        if not all_codes:
             return []
-        return [{"patient_id": patient.patient_id, "visits": visits}]
+        return [{"patient_id": patient.patient_id, "visits": all_codes}]
 
 
 class CorGANGenerationMIMIC4(CorGANGenerationMIMIC3):

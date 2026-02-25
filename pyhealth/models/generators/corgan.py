@@ -469,7 +469,7 @@ class CorGAN(BaseModel):
         Generative Adversarial Networks", JAMIA 2019.
 
     Args:
-        dataset: A fitted SampleDataset with ``input_schema = {"visits": "nested_sequence"}``.
+        dataset: A fitted SampleDataset with ``input_schema = {"visits": "multi_hot"}``.
         latent_dim: Dimensionality of the generator latent space. Default: 128.
         hidden_dim: Hidden dimension for the generator MLP. Default: 128.
         batch_size: Training batch size. Default: 512.
@@ -493,10 +493,10 @@ class CorGAN(BaseModel):
 
     Examples:
         >>> from pyhealth.datasets.sample_dataset import InMemorySampleDataset
-        >>> samples = [{"patient_id": "p1", "visits": [["A", "B"], ["C"]]}]
+        >>> samples = [{"patient_id": "p1", "visits": ["A", "B", "C"]}]
         >>> dataset = InMemorySampleDataset(
         ...     samples=samples,
-        ...     input_schema={"visits": "nested_sequence"},
+        ...     input_schema={"visits": "multi_hot"},
         ...     output_schema={},
         ... )
         >>> model = CorGAN(dataset, latent_dim=32, hidden_dim=32, epochs=1)
@@ -544,19 +544,26 @@ class CorGAN(BaseModel):
 
         # vocabulary from the dataset's fitted processor
         processor = dataset.input_processors["visits"]
-        self.input_dim = processor.vocab_size()
+        self.input_dim = processor.size()
         # build reverse-lookup: integer index -> code string
         self._idx_to_code: List[Optional[str]] = [None] * self.input_dim
-        for code, idx in processor.code_vocab.items():
+        for code, idx in processor.label_vocab.items():
             self._idx_to_code[idx] = code
 
         # initialize components
-        if autoencoder_type == "cnn8layer":
+        # CNN autoencoder requires a minimum input size to survive its convolution chain
+        # (6 layers with kernels 5,5,5,5,5,8 and strides 2,2,3,3,3,1 need at least ~500
+        # features). Fall back to the linear autoencoder for small vocabularies.
+        _effective_type = autoencoder_type
+        if autoencoder_type not in ("linear", "cnn8layer") and self.input_dim < 500:
+            _effective_type = "linear"
+
+        if _effective_type == "cnn8layer":
             self.autoencoder = CorGAN8LayerAutoencoder(
                 feature_size=self.input_dim,
                 latent_dim=latent_dim,
             )
-        elif autoencoder_type == "linear":
+        elif _effective_type == "linear":
             self.autoencoder = CorGANLinearAutoencoder(
                 feature_size=self.input_dim,
                 latent_dim=latent_dim,
@@ -606,40 +613,6 @@ class CorGAN(BaseModel):
         self.discriminator.apply(weights_init)
         self.autoencoder.apply(weights_init)
 
-    def _encode_samples_to_multihot(self, dataset) -> np.ndarray:
-        """Build a multi-hot binary matrix from a SampleDataset.
-
-        Each row corresponds to one patient sample. All visits are aggregated
-        into a single flat set of codes per patient and encoded as a binary
-        vector of length ``vocab_size``.
-
-        Args:
-            dataset: A fitted SampleDataset whose raw samples contain
-                ``sample["visits"]`` as a list of lists of code strings.
-
-        Returns:
-            np.ndarray of shape ``(n_patients, vocab_size)`` with dtype float32.
-        """
-        processor = self.dataset.input_processors["visits"]
-        code_vocab = processor.code_vocab
-
-        n = len(dataset)
-        matrix = np.zeros((n, self.input_dim), dtype=np.float32)
-
-        for i, sample in enumerate(dataset):
-            # sample["visits"] is the raw nested list from the original dict,
-            # but after SampleDataset processing it may be a tensor.
-            # We need the raw string codes, so access via dataset.samples if
-            # available, otherwise decode from the processed tensor.
-            visits = dataset.samples[i].get("visits", [])
-            for visit in visits:
-                if isinstance(visit, list):
-                    for code in visit:
-                        if code is not None and code in code_vocab:
-                            matrix[i, code_vocab[code]] = 1.0
-
-        return matrix
-
     def forward(self, **kwargs) -> Dict[str, torch.Tensor]:
         """Not used in GAN context."""
         raise NotImplementedError("Forward pass not implemented for GAN models.")
@@ -652,13 +625,14 @@ class CorGAN(BaseModel):
 
         Args:
             train_dataset: A fitted SampleDataset with
-                ``input_schema = {"visits": "nested_sequence"}``.
+                ``input_schema = {"visits": "multi_hot"}``.
             val_dataset: Unused. Accepted for API compatibility.
         """
         print("Starting CorGAN training...")
 
-        # build multi-hot matrix from SampleDataset
-        data_matrix = self._encode_samples_to_multihot(train_dataset)
+        # build multi-hot matrix by stacking the pre-encoded tensors from MultiHotProcessor
+        tensors = [train_dataset[i]["visits"] for i in range(len(train_dataset))]
+        data_matrix = torch.stack(tensors).numpy()  # shape (n_patients, vocab_size)
 
         corgan_ds = CorGANDataset(data=data_matrix)
         sampler = torch.utils.data.sampler.RandomSampler(
@@ -732,7 +706,7 @@ class CorGAN(BaseModel):
                     # reset gradients of discriminator
                     self.optimizer_D.zero_grad()
 
-                    errD_real = torch.mean(self.discriminator(real_samples), dim=0)
+                    errD_real = torch.mean(self.discriminator(real_samples)).squeeze()
                     errD_real.backward(self.one)
 
                     # sample noise as generator input
@@ -740,9 +714,9 @@ class CorGAN(BaseModel):
 
                     # generate a batch of images
                     fake_samples = self.generator(z)
-                    fake_samples = torch.squeeze(self.autoencoder_decoder(fake_samples.unsqueeze(dim=2)))
+                    fake_samples = self.autoencoder.decode(fake_samples)
 
-                    errD_fake = torch.mean(self.discriminator(fake_samples.detach()), dim=0)
+                    errD_fake = torch.mean(self.discriminator(fake_samples.detach())).squeeze()
                     errD_fake.backward(self.mone)
                     errD = errD_real - errD_fake
 
@@ -764,10 +738,10 @@ class CorGAN(BaseModel):
 
                 # generate a batch of images
                 fake_samples = self.generator(z)
-                fake_samples = torch.squeeze(self.autoencoder_decoder(fake_samples.unsqueeze(dim=2)))
+                fake_samples = self.autoencoder.decode(fake_samples)
 
                 # loss measures generator's ability to fool the discriminator
-                errG = torch.mean(self.discriminator(fake_samples), dim=0)
+                errG = torch.mean(self.discriminator(fake_samples)).squeeze()
                 errG.backward(self.one)
 
                 # optimizer step
@@ -783,12 +757,20 @@ class CorGAN(BaseModel):
 
         print("Training completed!")
 
+        # save final checkpoint if save_dir is configured
+        if self.save_dir:
+            import os
+            os.makedirs(self.save_dir, exist_ok=True)
+            checkpoint_path = os.path.join(self.save_dir, "corgan_final.pt")
+            self.save_model(checkpoint_path)
+            print(f"Checkpoint saved to {checkpoint_path}")
+
     def synthesize_dataset(self, num_samples: int, random_sampling: bool = True) -> List[Dict]:
         """Generate synthetic patient records.
 
-        Each synthetic patient is represented as a single visit containing all
-        generated codes. This is an honest representation of what CorGAN produces —
-        a flat multi-hot vector aggregated across all visits.
+        Each synthetic patient is represented as a flat list of codes decoded
+        from the generated binary vector. This mirrors the ``multi_hot`` input
+        schema used during training.
 
         Args:
             num_samples: Number of synthetic patients to generate.
@@ -797,8 +779,7 @@ class CorGAN(BaseModel):
         Returns:
             List of dicts, each with:
                 ``"patient_id"`` (str): e.g. ``"synthetic_0"``.
-                ``"visits"`` (list of list of str): one visit per patient
-                    containing the decoded ICD codes.
+                ``"visits"`` (list of str): flat list of decoded ICD code strings.
         """
         # set models to eval mode
         self.generator.eval()
@@ -812,9 +793,7 @@ class CorGAN(BaseModel):
             for i in range(n_batches):
                 z = torch.randn(self.batch_size, self.latent_dim, device=device)
                 gen_samples_tensor = self.generator(z)
-                gen_samples_decoded = torch.squeeze(
-                    self.autoencoder_decoder(gen_samples_tensor.unsqueeze(dim=2))
-                )
+                gen_samples_decoded = self.autoencoder.decode(gen_samples_tensor)
                 gen_samples[i * self.batch_size:(i + 1) * self.batch_size, :] = (
                     gen_samples_decoded.cpu().data.numpy()
                 )
@@ -824,9 +803,7 @@ class CorGAN(BaseModel):
             if remaining > 0:
                 z = torch.randn(remaining, self.latent_dim, device=device)
                 gen_samples_tensor = self.generator(z)
-                gen_samples_decoded = torch.squeeze(
-                    self.autoencoder_decoder(gen_samples_tensor.unsqueeze(dim=2))
-                )
+                gen_samples_decoded = self.autoencoder.decode(gen_samples_tensor)
                 gen_samples[n_batches * self.batch_size:, :] = (
                     gen_samples_decoded.cpu().data.numpy()
                 )
@@ -846,7 +823,7 @@ class CorGAN(BaseModel):
             ]
             results.append({
                 "patient_id": f"synthetic_{i}",
-                "visits": [codes],
+                "visits": codes,
             })
 
         return results
