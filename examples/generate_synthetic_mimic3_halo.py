@@ -1,143 +1,150 @@
 #!/usr/bin/env python3
 """
-Generate synthetic MIMIC-III patients using trained HALO checkpoint.
-Outputs sequential visit data (temporal format) as pickle file.
+Example: Generate synthetic MIMIC-III patients using a trained HALO checkpoint.
+
+Loads MIMIC3Dataset with the halo_generation_mimic3_fn task (identical to
+training) so that the vocabulary is reconstructed, then loads the saved
+checkpoint and calls model.synthesize_dataset(). Output is saved as JSON.
+
+Usage:
+    python examples/generate_synthetic_mimic3_halo.py
+    python examples/generate_synthetic_mimic3_halo.py --save_dir ./my_save/ --num_samples 500
 """
 
-import os
-import sys
-sys.path.insert(0, '/u/jalenj4/PyHealth')
 import argparse
+import json
+import os
+
 import torch
-import pickle
-import pandas as pd
-from pyhealth.datasets.halo_mimic3 import HALO_MIMIC3Dataset
+
+from pyhealth.datasets import MIMIC3Dataset
 from pyhealth.models.generators.halo import HALO
-from pyhealth.models.generators.halo_resources.halo_config import HALOConfig
+from pyhealth.tasks import halo_generation_mimic3_fn
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Generate synthetic MIMIC-III patients with HALO"
+    )
+    parser.add_argument(
+        "--mimic3_root",
+        default="/path/to/mimic3",
+        help="Root directory of MIMIC-III data (default: /path/to/mimic3)",
+    )
+    parser.add_argument(
+        "--save_dir",
+        default="./save/",
+        help="Directory containing the trained halo_model checkpoint (default: ./save/)",
+    )
+    parser.add_argument(
+        "--num_samples",
+        type=int,
+        default=1000,
+        help="Number of synthetic patients to generate (default: 1000)",
+    )
+    parser.add_argument(
+        "--output",
+        default="synthetic_patients.json",
+        help="Output JSON file path (default: synthetic_patients.json)",
+    )
+    return parser.parse_args()
+
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate synthetic patients using trained HALO")
-    parser.add_argument("--checkpoint", required=True, help="Path to trained HALO checkpoint directory")
-    parser.add_argument("--output", required=True, help="Path to output pickle file")
-    parser.add_argument("--csv_output", help="Optional: Path to output CSV file (converts from pickle)")
-    args = parser.parse_args()
+    args = parse_args()
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
+    # ------------------------------------------------------------------
+    # STEP 1: Load MIMIC-III dataset
+    # The dataset must use the same tables and code_mapping as training
+    # so that the vocabulary is identical.
+    # ------------------------------------------------------------------
+    print("Loading MIMIC-III dataset...")
+    base_dataset = MIMIC3Dataset(
+        root=args.mimic3_root,
+        tables=["diagnoses_icd"],
+        code_mapping={},
+        dev=False,
+        refresh_cache=False,
+    )
+    print(f"  Loaded {len(base_dataset.patients)} patients")
 
-    # Load vocabulary and configuration from checkpoint directory
-    pkl_data_dir = args.checkpoint + "pkl_data/"
-    print(f"\nLoading vocabulary from {pkl_data_dir}")
+    # ------------------------------------------------------------------
+    # STEP 2: Apply the HALO generation task
+    # set_task builds the vocabulary via NestedSequenceProcessor — must
+    # match the task used during training exactly.
+    # ------------------------------------------------------------------
+    print("Applying HALO generation task...")
+    sample_dataset = base_dataset.set_task(halo_generation_mimic3_fn)
+    print(f"  {len(sample_dataset)} samples after task filtering")
 
-    code_to_index = pickle.load(open(f"{pkl_data_dir}/codeToIndex.pkl", "rb"))
-    index_to_code = pickle.load(open(f"{pkl_data_dir}/indexToCode.pkl", "rb"))
-    id_to_label = pickle.load(open(f"{pkl_data_dir}/idToLabel.pkl", "rb"))
-    train_dataset = pickle.load(open(f"{pkl_data_dir}/trainDataset.pkl", "rb"))
-
-    code_vocab_size = len(code_to_index)
-    label_vocab_size = len(id_to_label)
-    special_vocab_size = 3
-    total_vocab_size = code_vocab_size + label_vocab_size + special_vocab_size
-
-    print(f"Vocabulary sizes:")
-    print(f"  Code vocabulary: {code_vocab_size}")
-    print(f"  Label vocabulary: {label_vocab_size}")
-    print(f"  Total vocabulary: {total_vocab_size}")
-
-    # Create config with same parameters as training
-    config = HALOConfig(
-        total_vocab_size=total_vocab_size,
-        code_vocab_size=code_vocab_size,
-        label_vocab_size=label_vocab_size,
-        special_vocab_size=special_vocab_size,
-        n_positions=56,
+    # ------------------------------------------------------------------
+    # STEP 3: Instantiate HALO with the same hyperparameters as training
+    # The model constructor uses the dataset to determine vocab sizes;
+    # the weights are loaded from the checkpoint immediately after.
+    # ------------------------------------------------------------------
+    print("Initializing HALO model...")
+    model = HALO(
+        dataset=sample_dataset,
+        embed_dim=768,
+        n_heads=12,
+        n_layers=12,
         n_ctx=48,
-        n_embd=768,
-        n_layer=12,
-        n_head=12,
-        layer_norm_epsilon=1e-5,
-        initializer_range=0.02,
         batch_size=48,
-        sample_batch_size=256,  # Generation batch size
-        epoch=50,
+        epochs=50,
         pos_loss_weight=None,
-        lr=1e-4
+        lr=1e-4,
+        save_dir=args.save_dir,
     )
 
-    # Create a minimal dataset object (just for interface compatibility)
-    class MinimalDataset:
-        def __init__(self, pkl_data_dir):
-            self.pkl_data_dir = pkl_data_dir
+    # ------------------------------------------------------------------
+    # STEP 4: Load trained checkpoint
+    # The training loop saves to save_dir/halo_model with keys
+    # "model" (halo_model state dict) and "optimizer".
+    # ------------------------------------------------------------------
+    checkpoint_path = os.path.join(args.save_dir, "halo_model")
+    print(f"Loading checkpoint from {checkpoint_path} ...")
+    if not os.path.exists(checkpoint_path):
+        raise FileNotFoundError(
+            f"Checkpoint not found at {checkpoint_path}. "
+            "Train the model first with examples/halo_mimic3_training.py."
+        )
+    checkpoint = torch.load(checkpoint_path, map_location="cpu")
+    model.halo_model.load_state_dict(checkpoint["model"])
+    print("  Checkpoint loaded successfully")
 
-    dataset = MinimalDataset(pkl_data_dir)
+    # ------------------------------------------------------------------
+    # STEP 5: Generate synthetic patients
+    # synthesize_dataset returns List[Dict] where each dict has:
+    #   "patient_id": "synthetic_N"
+    #   "visits": [[code, ...], ...]
+    # ------------------------------------------------------------------
+    print(f"Generating {args.num_samples} synthetic patients...")
+    synthetic_data = model.synthesize_dataset(
+        num_samples=args.num_samples,
+        random_sampling=True,
+    )
 
-    # Load trained model
-    print(f"\nLoading checkpoint from {args.checkpoint}halo_model")
-    from pyhealth.models.generators.halo_resources.halo_model import HALOModel
+    # ------------------------------------------------------------------
+    # STEP 6: Save output as JSON
+    # ------------------------------------------------------------------
+    print(f"Saving output to {args.output} ...")
+    with open(args.output, "w") as f:
+        json.dump(synthetic_data, f, indent=2)
 
-    model = HALOModel(config).to(device)
-    checkpoint = torch.load(f'{args.checkpoint}halo_model', map_location=device)
-    model.load_state_dict(checkpoint['model'])
-    model.eval()
+    # ------------------------------------------------------------------
+    # STEP 7: Print summary statistics
+    # ------------------------------------------------------------------
+    total_patients = len(synthetic_data)
+    total_visits = sum(len(p["visits"]) for p in synthetic_data)
+    avg_visits = total_visits / total_patients if total_patients > 0 else 0.0
 
-    print("Model loaded successfully")
+    print("\n--- Generation Summary ---")
+    print(f"  Patients generated : {total_patients}")
+    print(f"  Total visits       : {total_visits}")
+    print(f"  Avg visits/patient : {avg_visits:.2f}")
+    print(f"  Output saved to    : {args.output}")
+    print("Done.")
 
-    # Generate synthetic patients
-    n_samples = 10000  # Generate 10k synthetic patients
-    print(f"\nGenerating {n_samples} synthetic patients...")
-    print("This will take 1-2 hours...")
 
-    # Create HALO instance for generation
-    halo = HALO(dataset=dataset, config=config, save_dir=args.checkpoint, train_on_init=False)
-    halo.model = model
-    halo.train_ehr_dataset = train_dataset[:n_samples]  # Limit to 10k
-    halo.index_to_code = index_to_code
-
-    # Generate synthetic data
-    output_dir = os.path.dirname(args.output)
-    if output_dir and not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-
-    halo.synthesize_dataset(pkl_save_dir=output_dir + "/")
-
-    # Move the generated file to the requested output path
-    generated_file = os.path.join(output_dir, "haloDataset.pkl")
-    if generated_file != args.output:
-        os.rename(generated_file, args.output)
-
-    print(f"\nGeneration complete!")
-    print(f"Output saved to: {args.output}")
-
-    # Load and print statistics
-    synthetic_data = pickle.load(open(args.output, "rb"))
-    print(f"\nSynthetic data statistics:")
-    print(f"  Total patients: {len(synthetic_data)}")
-    print(f"  Avg visits per patient: {sum(len(p['visits']) for p in synthetic_data) / len(synthetic_data):.2f}")
-    print(f"  Total visits: {sum(len(p['visits']) for p in synthetic_data)}")
-    print(f"  Avg codes per visit: {sum(len(c) for p in synthetic_data for v in p['visits'] for c in v) / sum(len(p['visits']) for p in synthetic_data):.2f}")
-
-    # Optionally convert to CSV format
-    if args.csv_output:
-        print(f"\nConverting to CSV format: {args.csv_output}")
-        convert_to_csv(synthetic_data, index_to_code, args.csv_output)
-
-def convert_to_csv(synthetic_data, index_to_code, csv_path):
-    """Convert pickle format to CSV with temporal information."""
-    records = []
-    for patient_idx, patient in enumerate(synthetic_data):
-        patient_id = f"SYNTHETIC_{patient_idx+1:06d}"
-        for visit_num, visit in enumerate(patient['visits'], 1):
-            for code_idx in visit:
-                icd9_code = index_to_code[code_idx]
-                records.append({
-                    'SUBJECT_ID': patient_id,
-                    'VISIT_NUM': visit_num,
-                    'ICD9_CODE': icd9_code
-                })
-
-    df = pd.DataFrame(records)
-    df.to_csv(csv_path, index=False)
-    print(f"CSV saved with {len(df)} records")
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
