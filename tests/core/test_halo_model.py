@@ -9,6 +9,7 @@ heavy dependencies like litdata, pyarrow, einops not present in the test venv).
 """
 
 import importlib.util
+import os
 import sys
 import types
 import unittest
@@ -56,8 +57,9 @@ def _bootstrap_imports():
         spec.loader.exec_module(mod)
         return mod
 
-    base = "/u/jalenj4/PyHealth/pyhealth/models"
-    res = "/u/jalenj4/PyHealth/pyhealth/models/generators/halo_resources"
+    _PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    base = os.path.join(_PROJECT_ROOT, "pyhealth", "models")
+    res = os.path.join(_PROJECT_ROOT, "pyhealth", "models", "generators", "halo_resources")
 
     # Load base_model
     bm_mod = _load_file("pyhealth.models.base_model", f"{base}/base_model.py")

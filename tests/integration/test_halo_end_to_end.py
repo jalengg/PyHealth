@@ -167,6 +167,10 @@ class TestHALOFullPipelineForward(unittest.TestCase):
         self.tmpdir = tempfile.mkdtemp()
         self.model = HALO(self.dataset, save_dir=self.tmpdir, **_SMALL_MODEL_KWARGS)
 
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
     def test_full_pipeline_forward(self):
         """Forward pass on a batch from the dataset returns loss and predictions."""
         sample = self.dataset[0]
@@ -219,6 +223,10 @@ class TestHALOSynthesizeReturnsCorrectCount(unittest.TestCase):
         self.tmpdir = tempfile.mkdtemp()
         self.model = HALO(self.dataset, save_dir=self.tmpdir, **_SMALL_MODEL_KWARGS)
 
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
     def test_synthesize_returns_correct_count(self):
         result = self.model.synthesize_dataset(num_samples=5)
         self.assertIsInstance(result, list)
@@ -232,6 +240,10 @@ class TestHALOSynthesizeOutputStructure(unittest.TestCase):
         self.dataset = _make_dataset()
         self.tmpdir = tempfile.mkdtemp()
         self.model = HALO(self.dataset, save_dir=self.tmpdir, **_SMALL_MODEL_KWARGS)
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_synthesize_output_structure(self):
         result = self.model.synthesize_dataset(num_samples=3)
@@ -294,7 +306,10 @@ class TestHALOFeatureKeys(unittest.TestCase):
 # Category B: MIMIC-III Integration Tests (skipped if data unavailable)
 # ---------------------------------------------------------------------------
 
-_MIMIC3_PATH = "/srv/local/data/physionet.org/files/mimiciii/1.4"
+_MIMIC3_PATH = os.environ.get(
+    "PYHEALTH_MIMIC3_PATH",
+    "/srv/local/data/physionet.org/files/mimiciii/1.4",
+)
 
 
 class TestHALOMIMIC3Integration(unittest.TestCase):
