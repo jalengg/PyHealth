@@ -5,10 +5,13 @@ from pyhealth.datasets import MIMIC3Dataset
 from pyhealth.tasks import corgan_generation_mimic3_fn
 from pyhealth.models.generators.corgan import CorGAN
 
+# Update this to your local MIMIC-III path before running
+MIMIC3_ROOT = "/path/to/mimic3"
+
 # 1. Reconstruct dataset — required to initialise CorGAN's vocabulary from the processor.
 # If you trained with different tables=, update this to match exactly.
 base_dataset = MIMIC3Dataset(
-    root="/path/to/mimic3",
+    root=MIMIC3_ROOT,
     tables=["diagnoses_icd"],
 )
 sample_dataset = base_dataset.set_task(corgan_generation_mimic3_fn)
