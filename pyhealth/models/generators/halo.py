@@ -124,9 +124,9 @@ class HALO(BaseModel):
                 Index 0 is the pad token and is skipped.
 
         Returns:
-            Tuple ``(batch_ehr, batch_mask)``:
-                - batch_ehr: FloatTensor ``(batch, n_ctx, total_vocab_size)``
-                - batch_mask: FloatTensor ``(batch, n_ctx-1, 1)`` — shifted mask
+            batch_ehr: FloatTensor of shape ``(batch, n_ctx, total_vocab_size)``.
+            batch_mask: FloatTensor of shape ``(batch, n_ctx-1, 1)``, shifted to
+                align with the autoregressive prediction targets.
         """
         cfg = self.config
         batch_size = visits.shape[0]
@@ -170,9 +170,9 @@ class HALO(BaseModel):
             **kwargs: Additional keys from the batch dict are ignored.
 
         Returns:
-            Dict with keys:
-                - ``"loss"``: scalar BCE loss tensor
-                - ``"predictions"``: code probability tensor
+            loss: scalar BCE loss tensor.
+            predictions: code probability tensor of shape
+                ``(batch, n_ctx, total_vocab_size)``.
         """
         visits = visits.to(self.device)
         batch_ehr, batch_mask = self._encode_visits(visits)
@@ -291,9 +291,9 @@ class HALO(BaseModel):
                 If False, uses rounding (deterministic). Default: True.
 
         Returns:
-            List of dicts, each with:
-                - ``"patient_id"``: e.g. ``"synthetic_0"``
-                - ``"visits"``: list of lists of code strings
+            list of dicts, one per synthetic patient. Each dict contains:
+                ``"patient_id"`` (str): unique identifier, e.g. ``"synthetic_0"``.
+                ``"visits"`` (list of list of str): decoded code strings per visit.
         """
         cfg = self.config
         # Invert vocabulary: index → code string
