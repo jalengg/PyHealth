@@ -1,5 +1,6 @@
-import polars as pl
 from typing import Dict, List
+
+import polars as pl
 
 from pyhealth.tasks.base_task import BaseTask
 
@@ -42,8 +43,8 @@ class CorGANGenerationMIMIC3(BaseTask):
             list of dict: A single-element list containing the patient record,
                 or an empty list if the patient has fewer than 2 visits with
                 diagnosis codes. Each dict has:
-                    ``"patient_id"`` (str): the patient identifier.
-                    ``"visits"`` (list of list of str): per-visit ICD code lists.
+            ``"patient_id"`` (str): the patient identifier.
+            ``"visits"`` (list of list of str): per-visit ICD code lists.
         """
         admissions = list(patient.get_events(event_type="admissions"))
         visits = []
