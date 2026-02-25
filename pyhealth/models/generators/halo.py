@@ -31,7 +31,7 @@ class HALO(BaseModel):
     synthetic patients by autoregressive sampling.
 
     Args:
-        dataset: A SampleDataset whose input_schema contains
+        dataset (SampleDataset): A SampleDataset whose input_schema contains
             ``{"visits": "nested_sequence"}`` and whose output_schema is empty.
         embed_dim: Transformer embedding dimension. Default: 768.
         n_heads: Number of attention heads. Default: 12.
@@ -291,7 +291,7 @@ class HALO(BaseModel):
                 If False, uses rounding (deterministic). Default: True.
 
         Returns:
-            list of dicts, one per synthetic patient. Each dict contains:
+            list of dict: Synthetic patient records. Each dict has two keys:
                 ``"patient_id"`` (str): unique identifier, e.g. ``"synthetic_0"``.
                 ``"visits"`` (list of list of str): decoded code strings per visit.
         """

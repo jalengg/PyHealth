@@ -61,7 +61,7 @@ def main():
     print("Loading MIMIC-III dataset...")
     base_dataset = MIMIC3Dataset(
         root=args.mimic3_root,
-        tables=["diagnoses_icd"],
+        tables=["diagnoses_icd"],  # If you trained with different tables=, update this to match.
         code_mapping={},
         dev=False,
         refresh_cache=False,
@@ -90,7 +90,7 @@ def main():
         n_layers=12,
         n_ctx=48,
         batch_size=48,
-        epochs=50,
+        epochs=50,  # unused during generation; must match training for checkpoint compatibility
         pos_loss_weight=None,
         lr=1e-4,
         save_dir=args.save_dir,
